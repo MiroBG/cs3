@@ -1,0 +1,24 @@
+name: CS3 CI/CD
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+      - name: Terraform Init & Plan (placeholder)
+        run: |
+          echo "Add terraform init and plan steps here."
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: plan
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy (placeholder)
+        run: echo "Add deployment steps (kubectl apply / terraform apply) with OIDC auth"
