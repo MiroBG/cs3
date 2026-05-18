@@ -8,5 +8,22 @@ spec:
   ports:
   - protocol: TCP
     port: 80
-    targetPort: 80
-  type: ClusterIP
+    targetPort: 5000
+  type: LoadBalancer
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: portal-allow-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: cs3-portal
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - namespaceSelector: {}
+    ports:
+    - protocol: TCP
+      port: 5000

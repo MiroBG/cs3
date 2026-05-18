@@ -23,6 +23,11 @@ variable "private_subnet_cidrs" {
   default = ["10.30.10.0/24", "10.30.11.0/24"]
 }
 
+variable "database_subnet_cidrs" {
+  type    = list(string)
+  default = ["10.30.20.0/24", "10.30.21.0/24"]
+}
+
 variable "azs" {
   type    = list(string)
   default = ["eu-central-1a", "eu-central-1b"]

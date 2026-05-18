@@ -51,6 +51,18 @@ resource "aws_subnet" "private" {
   })
 }
 
+resource "aws_subnet" "database" {
+  for_each = { for index, cidr in var.database_subnet_cidrs : index => cidr }
+
+  vpc_id            = aws_vpc.this.id
+  cidr_block        = each.value
+  availability_zone = element(var.azs, tonumber(each.key) % length(var.azs))
+
+  tags = merge(local.common_tags, {
+    Name = "${var.name_prefix}-database-${tonumber(each.key) + 1}"
+  })
+}
+
 resource "aws_eip" "nat" {
   count  = var.enable_nat_gateway ? 1 : 0
   domain = "vpc"
@@ -123,6 +135,10 @@ output "public_subnet_ids" {
   value = [for subnet in values(aws_subnet.public) : subnet.id]
 }
 
+
+output "database_subnet_ids" {
+  value = [for subnet in values(aws_subnet.database) : subnet.id]
+}
 output "private_subnet_ids" {
   value = [for subnet in values(aws_subnet.private) : subnet.id]
 }

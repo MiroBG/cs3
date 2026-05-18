@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CS3 Employee Portal</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background: #f5f5f5; color: #333; }
+        header { background: #2c3e50; color: white; padding: 1rem 2rem; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .container { max-width: 1200px; margin: 2rem auto; padding: 0 1rem; }
+        .navbar { display: flex; justify-content: space-between; align-items: center; }
+        .navbar h1 { font-size: 1.5rem; }
+        .navbar a { color: white; text-decoration: none; margin-left: 2rem; }
+        .navbar a:hover { text-decoration: underline; }
+        .card { background: white; border-radius: 8px; padding: 1.5rem; margin: 1rem 0; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .section-title { font-size: 1.25rem; font-weight: 600; margin-bottom: 1rem; color: #2c3e50; }
+        .profile-info { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; }
+        .info-item { padding: 1rem; background: #ecf0f1; border-radius: 4px; }
+        .info-label { font-weight: 600; color: #7f8c8d; font-size: 0.9rem; }
+        .info-value { font-size: 1.1rem; color: #2c3e50; margin-top: 0.25rem; }
+        .button { display: inline-block; padding: 0.75rem 1.5rem; background: #3498db; color: white; text-decoration: none; border-radius: 4px; border: none; cursor: pointer; font-size: 1rem; }
+        .button:hover { background: #2980b9; }
+        .button.secondary { background: #95a5a6; }
+        .button.secondary:hover { background: #7f8c8d; }
+        .form-group { margin: 1rem 0; }
+        .form-group label { display: block; font-weight: 600; margin-bottom: 0.5rem; }
+        .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 0.75rem; border: 1px solid #bdc3c7; border-radius: 4px; font-size: 1rem; }
+        .form-group textarea { resize: vertical; min-height: 100px; }
+        .request-list { margin-top: 1rem; }
+        .request-item { padding: 1rem; border-left: 4px solid #3498db; background: #ecf0f1; margin: 0.5rem 0; border-radius: 4px; }
+        .request-status { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 12px; font-size: 0.9rem; font-weight: 600; }
+        .request-status.pending { background: #f39c12; color: white; }
+        .request-status.approved { background: #27ae60; color: white; }
+        .request-status.denied { background: #e74c3c; color: white; }
+        .alert { padding: 1rem; border-radius: 4px; margin: 1rem 0; }
+        .alert.success { background: #d5f4e6; color: #27ae60; border-left: 4px solid #27ae60; }
+        .alert.error { background: #fadbd8; color: #e74c3c; border-left: 4px solid #e74c3c; }
+        .loading { text-align: center; padding: 2rem; }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="navbar">
+            <h1>CS3 Employee Portal</h1>
+            <div>
+                <span>{{ user.name }}</span>
+                <a href="{{ url_for('logout') }}">Logout</a>
+            </div>
+        </div>
+    </header>
+
+    <div class="container">
+        <div class="card">
+            <h2 class="section-title">Your Profile</h2>
+            <div id="profile-loading" class="loading">
+                <div class="spinner"></div>
+            </div>
+            <div id="profile-content" style="display: none;">
+                <div class="profile-info" id="profile-info"></div>
+            </div>
+            <div id="profile-error" style="display: none;" class="alert alert-error"></div>
+        </div>
+
+        <div class="card">
+            <h2 class="section-title">New Request</h2>
+            <form id="request-form">
+                <div class="form-group">
+                    <label for="request-type">Request Type</label>
+                    <select id="request-type" required>
+                        <option value="">-- Select --</option>
+                        <option value="equipment">Equipment</option>
+                        <option value="access">System Access</option>
+                        <option value="leave">Time Off</option>
+                        <option value="other">Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="request-description">Description</label>
+                    <textarea id="request-description" required placeholder="Describe your request..."></textarea>
+                </div>
+                <button type="submit" class="button">Submit Request</button>
+            </form>
+            <div id="request-message" style="display: none;"></div>
+        </div>
+
+        <div class="card">
+            <h2 class="section-title">Your Requests</h2>
+            <div id="requests-loading" class="loading">
+                <div class="spinner"></div>
+            </div>
+            <div id="requests-content" style="display: none;">
+                <div id="requests-list" class="request-list"></div>
+            </div>
+            <div id="requests-error" style="display: none;" class="alert alert-error"></div>
+        </div>
+    </div>
+
+    <script>
+        async function loadProfile() {
+            try {
+                const response = await fetch('/api/profile');
+                if (!response.ok) throw new Error('Failed to load profile');
+                
+                const profile = await response.json();
+                document.getElementById('profile-loading').style.display = 'none';
+                document.getElementById('profile-content').style.display = 'block';
+                
+                const profileInfo = document.getElementById('profile-info');
+                profileInfo.innerHTML = `
+                    <div class="info-item">
+                        <div class="info-label">Name</div>
+                        <div class="info-value">${profile.name}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Email</div>
+                        <div class="info-value">${profile.email}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Department</div>
+                        <div class="info-value">${profile.department || 'N/A'}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Status</div>
+                        <div class="info-value">${profile.status}</div>
+                    </div>
+                `;
+            } catch (error) {
+                document.getElementById('profile-loading').style.display = 'none';
+                document.getElementById('profile-error').style.display = 'block';
+                document.getElementById('profile-error').textContent = error.message;
+            }
+        }
+
+        async function loadRequests() {
+            try {
+                const response = await fetch('/api/requests');
+                if (!response.ok) throw new Error('Failed to load requests');
+                
+                const requests = await response.json();
+                document.getElementById('requests-loading').style.display = 'none';
+                document.getElementById('requests-content').style.display = 'block';
+                
+                const requestsList = document.getElementById('requests-list');
+                if (requests.length === 0) {
+                    requestsList.innerHTML = '<p>No requests yet.</p>';
+                } else {
+                    requestsList.innerHTML = requests.map(req => `
+                        <div class="request-item">
+                            <strong>${req.request_type}</strong>
+                            <span class="request-status ${req.status}">${req.status}</span>
+                            <p>${req.description}</p>
+                            <small>Created: ${new Date(req.created_at).toLocaleDateString()}</small>
+                        </div>
+                    `).join('');
+                }
+            } catch (error) {
+                document.getElementById('requests-loading').style.display = 'none';
+                document.getElementById('requests-error').style.display = 'block';
+                document.getElementById('requests-error').textContent = error.message;
+            }
+        }
+
+        document.getElementById('request-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const requestType = document.getElementById('request-type').value;
+            const description = document.getElementById('request-description').value;
+            
+            try {
+                const response = await fetch('/api/requests', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ type: requestType, description })
+                });
+                
+                if (!response.ok) throw new Error('Failed to create request');
+                
+                const msg = document.getElementById('request-message');
+                msg.className = 'alert alert-success';
+                msg.textContent = 'Request submitted successfully!';
+                msg.style.display = 'block';
+                
+                document.getElementById('request-form').reset();
+                setTimeout(loadRequests, 500);
+            } catch (error) {
+                const msg = document.getElementById('request-message');
+                msg.className = 'alert alert-error';
+                msg.textContent = error.message;
+                msg.style.display = 'block';
+            }
+        });
+
+        // Load data on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadProfile();
+            loadRequests();
+        });
+    </script>
+</body>
+</html>
