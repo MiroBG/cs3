@@ -122,6 +122,22 @@ jobs:
             echo "Deleting log group: $log_group"
             aws logs delete-log-group --log-group-name "$log_group" --region ${{ env.AWS_REGION }} 2>/dev/null && echo "✓ Deleted log group: $log_group" || echo "✗ Failed to delete log group: $log_group"
           done
+
+          echo "=== Cleaning up Network Interfaces (ENIs) ==="
+          for eni in $(aws ec2 describe-network-interfaces --region ${{ env.AWS_REGION }} --query 'NetworkInterfaces[].NetworkInterfaceId' --output text 2>/dev/null); do
+            name=$(aws ec2 describe-network-interfaces --network-interface-ids $eni --region ${{ env.AWS_REGION }} --query "NetworkInterfaces[0].TagSet[?Key=='Name'].Value | [0]" --output text 2>/dev/null || true)
+            desc=$(aws ec2 describe-network-interfaces --network-interface-ids $eni --region ${{ env.AWS_REGION }} --query "NetworkInterfaces[0].Description" --output text 2>/dev/null || true)
+            if [[ "$name" == cs3* || "$desc" == *cs3* ]]; then
+              echo "Processing ENI: $eni (name=$name desc=$desc)"
+              attach_id=$(aws ec2 describe-network-interfaces --network-interface-ids $eni --region ${{ env.AWS_REGION }} --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text 2>/dev/null || true)
+              if [[ -n "$attach_id" && "$attach_id" != "None" ]]; then
+                echo " Detaching attachment $attach_id"
+                aws ec2 detach-network-interface --attachment-id "$attach_id" --region ${{ env.AWS_REGION }} 2>/dev/null || true
+                sleep 2
+              fi
+              aws ec2 delete-network-interface --network-interface-id "$eni" --region ${{ env.AWS_REGION }} 2>/dev/null && echo "✓ Deleted ENI: $eni" || echo "✗ Failed to delete ENI: $eni"
+            fi
+          done
           
           echo "=== Cleanup completed ==="
 
