@@ -72,6 +72,58 @@ jobs:
 
       - name: Terraform destroy
         run: terraform destroy -auto-approve
+        continue-on-error: true
+
+      - name: Clean up orphaned resources
+        run: |
+          set +e  # Don't fail on individual cleanup steps
+          
+          echo "=== Cleaning up Cognito Domains ==="
+          # Delete all Cognito user pool domains matching the pattern
+          for domain in $(aws cognito-idp list-user-pool-domains --region ${{ env.AWS_REGION }} --query 'UserPoolDomains[].Domain' --output text 2>/dev/null); do
+            if [[ "$domain" =~ ^cs3- ]]; then
+              echo "Deleting Cognito domain: $domain"
+              aws cognito-idp delete-user-pool-domain --domain "$domain" --region ${{ env.AWS_REGION }} 2>/dev/null && echo "✓ Deleted domain: $domain" || echo "✗ Failed to delete domain: $domain"
+            fi
+          done
+          
+          echo "=== Cleaning up IAM Roles ==="
+          # Delete all IAM roles matching cs3 pattern
+          for role in $(aws iam list-roles --query "Roles[?contains(RoleName, 'cs3-')].RoleName" --output text 2>/dev/null); do
+            echo "Cleaning up IAM role: $role"
+            # Detach all managed policies
+            for policy_arn in $(aws iam list-attached-role-policies --role-name "$role" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
+              aws iam detach-role-policy --role-name "$role" --policy-arn "$policy_arn" 2>/dev/null && echo "  ✓ Detached policy: $policy_arn" || true
+            done
+            # Delete all inline policies
+            for policy_name in $(aws iam list-role-policies --role-name "$role" --query 'PolicyNames[]' --output text 2>/dev/null); do
+              aws iam delete-role-policy --role-name "$role" --policy-name "$policy_name" 2>/dev/null && echo "  ✓ Deleted inline policy: $policy_name" || true
+            done
+            # Delete the role
+            aws iam delete-role --role-name "$role" 2>/dev/null && echo "✓ Deleted role: $role" || echo "✗ Failed to delete role: $role"
+          done
+          
+          echo "=== Cleaning up ECR Repositories ==="
+          # Delete all ECR repos matching cs3 pattern
+          for repo in $(aws ecr describe-repositories --region ${{ env.AWS_REGION }} --query "repositories[?contains(repositoryName, 'cs3-')].repositoryName" --output text 2>/dev/null); do
+            echo "Deleting ECR repository: $repo"
+            aws ecr delete-repository --repository-name "$repo" --region ${{ env.AWS_REGION }} --force 2>/dev/null && echo "✓ Deleted repo: $repo" || echo "✗ Failed to delete repo: $repo"
+          done
+          
+          echo "=== Cleaning up CloudWatch Log Groups ==="
+          # Delete all CloudWatch log groups matching cs3 pattern
+          for log_group in $(aws logs describe-log-groups --region ${{ env.AWS_REGION }} --query "logGroups[?contains(logGroupName, 'cs3-')].logGroupName" --output text 2>/dev/null); do
+            echo "Deleting CloudWatch log group: $log_group"
+            aws logs delete-log-group --log-group-name "$log_group" --region ${{ env.AWS_REGION }} 2>/dev/null && echo "✓ Deleted log group: $log_group" || echo "✗ Failed to delete log group: $log_group"
+          done
+          
+          echo "=== Cleaning up remaining CloudWatch Log Groups with /aws paths ==="
+          for log_group in $(aws logs describe-log-groups --region ${{ env.AWS_REGION }} --query "logGroups[?contains(logGroupName, '/aws/eks/cs3-')].logGroupName" --output text 2>/dev/null); do
+            echo "Deleting log group: $log_group"
+            aws logs delete-log-group --log-group-name "$log_group" --region ${{ env.AWS_REGION }} 2>/dev/null && echo "✓ Deleted log group: $log_group" || echo "✗ Failed to delete log group: $log_group"
+          done
+          
+          echo "=== Cleanup completed ==="
 
   destroy_rejected:
     name: Destroy rejected (missing confirmation)
