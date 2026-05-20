@@ -122,10 +122,10 @@ module "cognito" {
 module "ecr" {
   source = "./ecr"
 
-  name_prefix  = var.name_prefix
-  cluster_name = var.cluster_name
+  name_prefix     = var.name_prefix
+  cluster_name    = var.cluster_name
   resource_suffix = var.resource_suffix
-  tags         = var.tags
+  tags            = var.tags
 }
 
 module "logging" {
