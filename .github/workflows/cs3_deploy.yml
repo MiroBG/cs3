@@ -79,6 +79,77 @@ jobs:
       - name: Terraform init
         run: terraform init -reconfigure -backend-config=backend.hcl
 
+      - name: Auto-import existing AWS resources
+        run: |
+          set -euo pipefail
+          export ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          NAME_PREFIX="${TF_VAR_name_prefix:-cs3}"
+          RESOURCE_SUFFIX="${TF_VAR_resource_suffix:-v6}"
+          CLUSTER_NAME="${TF_VAR_cluster_name:-cs3-eks-cluster}"
+          DB_NAME="${NAME_PREFIX}-employee-db-${RESOURCE_SUFFIX}"
+          ECR_REPO_NAME="${NAME_PREFIX}-portal-${RESOURCE_SUFFIX}"
+          LOG_GROUP_NAME="/aws/eks/${CLUSTER_NAME}-${RESOURCE_SUFFIX}/portal"
+          EKS_CLUSTER_SG_NAME="${CLUSTER_NAME}-${RESOURCE_SUFFIX}-cluster-sg"
+          RDS_SG_NAME="${DB_NAME}-sg"
+          RDS_SUBNET_GROUP_NAME="${DB_NAME}-subnet-group"
+          WAF_NAME="${NAME_PREFIX}-portal-waf-${RESOURCE_SUFFIX}"
+          COGNITO_ROLE_NAME="${NAME_PREFIX}-employees-${RESOURCE_SUFFIX}-authenticated-role"
+
+          set +e
+          echo "Attempting imports (errors are non-fatal)"
+
+          # ECR repository
+          if aws ecr describe-repositories --repository-names "$ECR_REPO_NAME" >/dev/null 2>&1; then
+            terraform import "module.ecr.aws_ecr_repository.portal" "$ECR_REPO_NAME" || true
+          fi
+
+          # CloudWatch log group
+          if aws logs describe-log-groups --log-group-name-prefix "$LOG_GROUP_NAME" --query 'logGroups[?logGroupName==`'"$LOG_GROUP_NAME"'`].logGroupName' --output text >/dev/null 2>&1; then
+            terraform import "module.ecr.aws_cloudwatch_log_group.portal" "$LOG_GROUP_NAME" || true
+          fi
+
+          # EKS security group
+          SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$EKS_CLUSTER_SG_NAME" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || true)
+          if [[ -n "$SG_ID" && "$SG_ID" != "None" ]]; then
+            terraform import "module.eks.aws_security_group.cluster" "$SG_ID" || true
+          fi
+
+          # RDS security group
+          SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$RDS_SG_NAME" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || true)
+          if [[ -n "$SG_ID" && "$SG_ID" != "None" ]]; then
+            terraform import "module.rds.aws_security_group.rds" "$SG_ID" || true
+          fi
+
+          # IAM roles (cluster, node, cognito)
+          for ROLE in "${CLUSTER_NAME}-${RESOURCE_SUFFIX}-cluster-role" "${CLUSTER_NAME}-${RESOURCE_SUFFIX}-node-role" "$COGNITO_ROLE_NAME"; do
+            if aws iam get-role --role-name "$ROLE" >/dev/null 2>&1; then
+              case "$ROLE" in
+                *-cluster-role)
+                  terraform import "module.eks.aws_iam_role.cluster" "$ROLE" || true
+                  ;;
+                *-node-role)
+                  terraform import "module.eks.aws_iam_role.node" "$ROLE" || true
+                  ;;
+                *authenticated-role)
+                  terraform import "module.cognito.aws_iam_role.cognito_authenticated" "$ROLE" || true
+                  ;;
+              esac
+            fi
+          done
+
+          # RDS subnet group
+          if aws rds describe-db-subnet-groups --db-subnet-group-name "$RDS_SUBNET_GROUP_NAME" >/dev/null 2>&1; then
+            terraform import "module.rds.aws_db_subnet_group.this" "$RDS_SUBNET_GROUP_NAME" || true
+          fi
+
+          # WAFv2 Web ACL (regional)
+          WAF_ARN=$(aws wafv2 list-web-acls --scope REGIONAL --region ${{ env.AWS_REGION }} --query "WebACLs[?Name=='$WAF_NAME'].ARN | [0]" --output text 2>/dev/null || true)
+          if [[ -n "$WAF_ARN" && "$WAF_ARN" != "None" ]]; then
+            terraform import "module.waf.aws_wafv2_web_acl.portal" "$WAF_ARN" || true
+          fi
+
+          set -e
+
       - name: Terraform plan
         env:
           TF_VAR_resource_suffix: "v6"
