@@ -148,7 +148,11 @@ jobs:
           [[ -n "$COGNITO_CALLBACK" ]] && echo "TF_VAR_cognito_callback_url=$COGNITO_CALLBACK" >> "$GITHUB_ENV" || true
 
       - name: Terraform plan
-        run: terraform plan -var="db_password=${{ secrets.CS3_DB_PASSWORD }}" -out=tfplan
+        env:
+          TF_LOG: DEBUG
+          TF_VAR_db_password: ${{ secrets.CS3_DB_PASSWORD }}
+          TF_VAR_grafana_admin_password: ${{ secrets.GRAFANA_ADMIN_PASSWORD || secrets.CS3_GRAFANA_ADMIN_PASSWORD }}
+        run: terraform plan -input=false -out=tfplan
 
       - name: Terraform apply
         run: terraform apply -auto-approve tfplan
