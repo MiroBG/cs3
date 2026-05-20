@@ -71,9 +71,10 @@ jobs:
         working-directory: cs3/terraform
         env:
           AWS_REGION: ${{ env.AWS_REGION }}
-          TF_VAR_grafana_admin_password: ${{ secrets.GRAFANA_ADMIN_PASSWORD }}
+          TF_LOG: DEBUG
+          TF_VAR_grafana_admin_password: ${{ secrets.GRAFANA_ADMIN_PASSWORD || secrets.CS3_GRAFANA_ADMIN_PASSWORD }}
           TF_VAR_db_password: ${{ secrets.CS3_DB_PASSWORD }}
-        run: terraform plan -out=tfplan
+        run: terraform plan -input=false -out=tfplan
 
       - name: Upload Plan Artifact
         uses: actions/upload-artifact@v3
