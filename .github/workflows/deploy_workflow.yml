@@ -7,7 +7,8 @@ on:
       - "terraform/**"
       - "bootstrap/**"
       - ".github/workflows/deploy_workflow.yml"
-      - ".github/workflows/destroy_workflow.yml"
+    paths-ignore:
+      - "cs3/**"
   push:
     branches:
       - main
@@ -16,7 +17,8 @@ on:
       - "terraform/**"
       - "bootstrap/**"
       - ".github/workflows/deploy_workflow.yml"
-      - ".github/workflows/destroy_workflow.yml"
+    paths-ignore:
+      - "cs3/**"
   workflow_dispatch:
 
 permissions:
