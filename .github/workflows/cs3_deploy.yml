@@ -91,7 +91,7 @@ jobs:
 
       - name: Terraform plan
         env:
-          TF_VAR_resource_suffix: "v4"
+          TF_VAR_resource_suffix: "v5"
           TF_VAR_use_default_vpc: "true"
         run: terraform plan -var="db_password=${{ secrets.CS3_DB_PASSWORD || vars.CS3_DB_PASSWORD }}" -out=tfplan
 
@@ -153,7 +153,7 @@ jobs:
       - name: Terraform plan
         env:
           TF_LOG: DEBUG
-          TF_VAR_resource_suffix: "v4"
+          TF_VAR_resource_suffix: "v5"
           TF_VAR_db_password: ${{ secrets.CS3_DB_PASSWORD }}
           TF_VAR_grafana_admin_password: ${{ secrets.GRAFANA_ADMIN_PASSWORD || secrets.CS3_GRAFANA_ADMIN_PASSWORD }}
           TF_VAR_use_default_vpc: "true"
@@ -161,7 +161,7 @@ jobs:
 
       - name: Terraform apply
         env:
-          TF_VAR_resource_suffix: "v4"
+          TF_VAR_resource_suffix: "v5"
           TF_VAR_use_default_vpc: "true"
         run: terraform apply -auto-approve tfplan
 
