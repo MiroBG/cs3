@@ -128,6 +128,12 @@ variable "cognito_domain" {
   default     = ""
 }
 
+variable "manage_cognito_domain" {
+  type        = bool
+  description = "If true, Terraform will create/manage the Cognito user pool domain; set false to skip domain creation to avoid global-name conflicts"
+  default     = false
+}
+
 variable "cognito_callback_urls" {
   type        = list(string)
   description = "OAuth callback URLs for the Cognito app client"

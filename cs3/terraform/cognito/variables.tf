@@ -55,3 +55,9 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "manage_cognito_domain" {
+  type        = bool
+  description = "Whether Terraform should create/manage the Cognito user pool domain (set false to skip domain creation to avoid global-name collisions)"
+  default     = false
+}

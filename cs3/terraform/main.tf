@@ -121,6 +121,7 @@ module "cognito" {
   identity_pool_id     = aws_cognito_identity_pool.this.id
   employee_bucket_name = var.employee_bucket_name
   tags                 = var.tags
+  manage_cognito_domain = var.manage_cognito_domain
 }
 
 module "ecr" {

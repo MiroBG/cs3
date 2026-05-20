@@ -67,11 +67,12 @@ resource "aws_cognito_user_pool" "this" {
 }
 
 resource "random_pet" "cognito_suffix" {
+  count  = var.manage_cognito_domain ? 1 : 0
   length = 2
 }
 
 locals {
-  computed_cognito_domain = var.cognito_domain != "" ? var.cognito_domain : "${var.user_pool_name}-${random_pet.cognito_suffix.id}"
+  computed_cognito_domain = var.cognito_domain != "" ? var.cognito_domain : (var.manage_cognito_domain ? "${var.user_pool_name}-${random_pet.cognito_suffix[0].id}" : "")
 }
 
 resource "aws_cognito_user_pool_client" "this" {
@@ -110,6 +111,7 @@ resource "aws_cognito_identity_provider" "google" {
 }
 
 resource "aws_cognito_user_pool_domain" "this" {
+  count        = var.manage_cognito_domain ? 1 : 0
   domain       = local.computed_cognito_domain
   user_pool_id = aws_cognito_user_pool.this.id
 }
@@ -198,9 +200,9 @@ output "client_secret" {
 }
 
 output "domain" {
-  value = aws_cognito_user_pool_domain.this.domain
+  value = var.manage_cognito_domain && length(aws_cognito_user_pool_domain.this) > 0 ? aws_cognito_user_pool_domain.this[0].domain : ""
 }
 
 output "cognito_auth_url" {
-  value = "https://${aws_cognito_user_pool_domain.this.domain}.auth.${var.aws_region}.amazoncognito.com"
+  value = var.manage_cognito_domain && length(aws_cognito_user_pool_domain.this) > 0 ? "https://${aws_cognito_user_pool_domain.this[0].domain}.auth.${var.aws_region}.amazoncognito.com" : ""
 }
