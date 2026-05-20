@@ -113,14 +113,14 @@ resource "aws_cognito_identity_pool" "this" {
 module "cognito" {
   source = "./cognito"
 
-  user_pool_name       = "${var.name_prefix}-employees-${var.resource_suffix}"
-  cognito_domain       = var.cognito_domain
-  aws_region           = var.region
-  callback_urls        = var.cognito_callback_urls
-  logout_urls          = var.cognito_logout_urls
-  identity_pool_id     = aws_cognito_identity_pool.this.id
-  employee_bucket_name = var.employee_bucket_name
-  tags                 = var.tags
+  user_pool_name        = "${var.name_prefix}-employees-${var.resource_suffix}"
+  cognito_domain        = var.cognito_domain
+  aws_region            = var.region
+  callback_urls         = var.cognito_callback_urls
+  logout_urls           = var.cognito_logout_urls
+  identity_pool_id      = aws_cognito_identity_pool.this.id
+  employee_bucket_name  = var.employee_bucket_name
+  tags                  = var.tags
   manage_cognito_domain = var.manage_cognito_domain
 }
 
