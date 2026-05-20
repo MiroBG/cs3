@@ -66,6 +66,14 @@ resource "aws_cognito_user_pool" "this" {
   })
 }
 
+resource "random_pet" "cognito_suffix" {
+  length = 2
+}
+
+locals {
+  computed_cognito_domain = var.cognito_domain != "" ? var.cognito_domain : "${var.user_pool_name}-${random_pet.cognito_suffix.id}"
+}
+
 resource "aws_cognito_user_pool_client" "this" {
   name                = "${var.user_pool_name}-client"
   user_pool_id        = aws_cognito_user_pool.this.id
@@ -102,7 +110,7 @@ resource "aws_cognito_identity_provider" "google" {
 }
 
 resource "aws_cognito_user_pool_domain" "this" {
-  domain       = var.cognito_domain
+  domain       = local.computed_cognito_domain
   user_pool_id = aws_cognito_user_pool.this.id
 }
 

@@ -8,6 +8,7 @@ variable "cognito_domain" {
   description = "Cognito domain name (must be globally unique)"
 }
 
+
 variable "aws_region" {
   type    = string
   default = "eu-central-1"

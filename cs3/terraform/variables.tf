@@ -125,7 +125,7 @@ variable "db_multi_az" {
 variable "cognito_domain" {
   type        = string
   description = "Cognito domain name (must be globally unique)"
-  default     = "cs3-employees-prod-v6"
+  default     = ""
 }
 
 variable "cognito_callback_urls" {
