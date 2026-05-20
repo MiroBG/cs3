@@ -61,7 +61,7 @@ resource "aws_security_group" "swarm" {
     from_port   = 2377
     to_port     = 2377
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]  # Restrict in production
+    cidr_blocks = ["0.0.0.0/0"] # Restrict in production
   }
 
   # Container network discovery
@@ -161,14 +161,14 @@ locals {
 
 # Manager nodes
 resource "aws_instance" "swarm_manager" {
-  count                    = var.swarm_manager_count
-  ami                      = data.aws_ami.ubuntu.id
-  instance_type            = var.instance_type
-  key_name                 = var.key_name
-  subnet_id                = var.subnet_ids[count.index % length(var.subnet_ids)]
-  iam_instance_profile     = aws_iam_instance_profile.swarm_node.name
-  vpc_security_group_ids   = [aws_security_group.swarm.id]
-  user_data                = local.manager_init_script
+  count                       = var.swarm_manager_count
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.instance_type
+  key_name                    = var.key_name
+  subnet_id                   = var.subnet_ids[count.index % length(var.subnet_ids)]
+  iam_instance_profile        = aws_iam_instance_profile.swarm_node.name
+  vpc_security_group_ids      = [aws_security_group.swarm.id]
+  user_data                   = local.manager_init_script
   associate_public_ip_address = true
 
   tags = merge(var.tags, {
@@ -179,14 +179,14 @@ resource "aws_instance" "swarm_manager" {
 
 # Worker nodes
 resource "aws_instance" "swarm_worker" {
-  count                    = var.swarm_worker_count
-  ami                      = data.aws_ami.ubuntu.id
-  instance_type            = var.instance_type
-  key_name                 = var.key_name
-  subnet_id                = var.subnet_ids[count.index % length(var.subnet_ids)]
-  iam_instance_profile     = aws_iam_instance_profile.swarm_node.name
-  vpc_security_group_ids   = [aws_security_group.swarm.id]
-  user_data                = local.worker_init_script
+  count                       = var.swarm_worker_count
+  ami                         = data.aws_ami.ubuntu.id
+  instance_type               = var.instance_type
+  key_name                    = var.key_name
+  subnet_id                   = var.subnet_ids[count.index % length(var.subnet_ids)]
+  iam_instance_profile        = aws_iam_instance_profile.swarm_node.name
+  vpc_security_group_ids      = [aws_security_group.swarm.id]
+  user_data                   = local.worker_init_script
   associate_public_ip_address = true
 
   tags = merge(var.tags, {
@@ -198,7 +198,7 @@ resource "aws_instance" "swarm_worker" {
 # Fetch latest Ubuntu AMI
 data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["099720109477"]  # Canonical
+  owners      = ["099720109477"] # Canonical
 
   filter {
     name   = "name"

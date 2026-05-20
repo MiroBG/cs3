@@ -146,7 +146,7 @@ module "waf" {
 }
 
 module "docker_swarm" {
-  count = var.enable_docker_swarm ? 1 : 0
+  count  = var.enable_docker_swarm ? 1 : 0
   source = "./docker_swarm"
 
   swarm_manager_count = var.swarm_manager_count
