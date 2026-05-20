@@ -139,6 +139,24 @@ jobs:
             fi
           done
           
+          echo "=== Cleaning up S3 buckets ==="
+          for bucket in $(aws s3 ls --query "Buckets[?contains(Name, 'cs3-')].Name" --output text 2>/dev/null); do
+            echo "Emptying and deleting S3 bucket: $bucket"
+            aws s3 rm "s3://$bucket" --recursive 2>/dev/null && echo "  ✓ Emptied bucket" || true
+            aws s3 rb "s3://$bucket" 2>/dev/null && echo "✓ Deleted bucket: $bucket" || echo "✗ Failed to delete bucket: $bucket"
+          done
+          
+          echo "=== Cleaning up WAFv2 WebACLs ==="
+          for acl_arn in $(aws wafv2 list-web-acls --scope REGIONAL --region ${{ env.AWS_REGION }} --query "WebACLs[?contains(Name,'cs3')].ARN" --output text 2>/dev/null); do
+            echo "Deleting WAFv2 WebACL: $acl_arn"
+            acl_id=$(echo "$acl_arn" | awk -F'/' '{print $3}')
+            acl_name=$(echo "$acl_arn" | awk -F'/' '{print $4}')
+            acl_version=$(aws wafv2 get-web-acl --scope REGIONAL --id "$acl_id" --name "$acl_name" --region ${{ env.AWS_REGION }} --query 'WebACL.LockToken' --output text 2>/dev/null || true)
+            if [[ -n "$acl_version" && "$acl_version" != "None" ]]; then
+              aws wafv2 delete-web-acl --scope REGIONAL --id "$acl_id" --name "$acl_name" --lock-token "$acl_version" --region ${{ env.AWS_REGION }} 2>/dev/null && echo "✓ Deleted WebACL: $acl_arn" || echo "✗ Failed to delete WebACL: $acl_arn"
+            fi
+          done
+          
           echo "=== Cleanup completed ==="
 
   destroy_rejected:
