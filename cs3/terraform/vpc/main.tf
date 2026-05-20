@@ -43,9 +43,9 @@ resource "aws_internet_gateway" "this" {
 }
 
 locals {
-  default_vpc_id  = length(data.aws_vpcs.default.ids) > 0 ? data.aws_vpcs.default.ids[0] : null
-  default_igw_id  = length(data.aws_internet_gateway.default) > 0 ? data.aws_internet_gateway.default[0].id : null
-  vpc_id          = var.use_default_vpc && local.default_vpc_id != null ? local.default_vpc_id : aws_vpc.this[0].id
+  default_vpc_id      = length(data.aws_vpcs.default.ids) > 0 ? data.aws_vpcs.default.ids[0] : null
+  default_igw_id      = length(data.aws_internet_gateway.default) > 0 ? data.aws_internet_gateway.default[0].id : null
+  vpc_id              = var.use_default_vpc && local.default_vpc_id != null ? local.default_vpc_id : aws_vpc.this[0].id
   internet_gateway_id = var.use_default_vpc && local.default_igw_id != null ? local.default_igw_id : aws_internet_gateway.this[0].id
 }
 
