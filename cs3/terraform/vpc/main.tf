@@ -39,8 +39,17 @@ resource "aws_vpc" "this" {
   })
 }
 
+data "aws_subnets" "selected" {
+  count = local.create_vpc ? 0 : 1
+
+  filter {
+    name   = "vpc-id"
+    values = [local.selected_vpc_id]
+  }
+}
+
 data "aws_internet_gateway" "selected" {
-  count = local.selected_vpc_id != null ? 1 : 0
+  count = local.create_vpc ? 0 : 1
 
   filter {
     name   = "attachment.vpc-id"
@@ -49,13 +58,17 @@ data "aws_internet_gateway" "selected" {
 }
 
 locals {
-  selected_igw_id     = local.selected_vpc_id != null ? try(data.aws_internet_gateway.selected[0].id, null) : null
+  existing_subnet_ids = local.create_vpc ? [] : try(data.aws_subnets.selected[0].ids, [])
+  selected_igw_id     = local.create_vpc ? null : try(data.aws_internet_gateway.selected[0].id, null)
   vpc_id              = local.create_vpc ? aws_vpc.this[0].id : local.selected_vpc_id
-  internet_gateway_id = local.selected_igw_id != null ? local.selected_igw_id : aws_internet_gateway.this[0].id
+  internet_gateway_id = local.create_vpc ? aws_internet_gateway.this[0].id : local.selected_igw_id
+  public_subnet_ids   = local.create_vpc ? [for subnet in values(aws_subnet.public) : subnet.id] : local.existing_subnet_ids
+  private_subnet_ids  = local.create_vpc ? [for subnet in values(aws_subnet.private) : subnet.id] : local.existing_subnet_ids
+  database_subnet_ids = local.create_vpc ? [for subnet in values(aws_subnet.database) : subnet.id] : local.existing_subnet_ids
 }
 
 resource "aws_internet_gateway" "this" {
-  count  = local.selected_igw_id != null ? 0 : 1
+  count  = local.create_vpc ? 1 : 0
   vpc_id = local.vpc_id
 
   tags = merge(local.common_tags, {
@@ -64,7 +77,7 @@ resource "aws_internet_gateway" "this" {
 }
 
 resource "aws_subnet" "public" {
-  for_each = { for index, cidr in var.public_subnet_cidrs : index => cidr }
+  for_each = local.create_vpc ? { for index, cidr in var.public_subnet_cidrs : index => cidr } : {}
 
   vpc_id                  = local.vpc_id
   cidr_block              = each.value
@@ -79,7 +92,7 @@ resource "aws_subnet" "public" {
 }
 
 resource "aws_subnet" "private" {
-  for_each = { for index, cidr in var.private_subnet_cidrs : index => cidr }
+  for_each = local.create_vpc ? { for index, cidr in var.private_subnet_cidrs : index => cidr } : {}
 
   vpc_id            = local.vpc_id
   cidr_block        = each.value
@@ -93,7 +106,7 @@ resource "aws_subnet" "private" {
 }
 
 resource "aws_subnet" "database" {
-  for_each = { for index, cidr in var.database_subnet_cidrs : index => cidr }
+  for_each = local.create_vpc ? { for index, cidr in var.database_subnet_cidrs : index => cidr } : {}
 
   vpc_id            = local.vpc_id
   cidr_block        = each.value
@@ -105,7 +118,7 @@ resource "aws_subnet" "database" {
 }
 
 resource "aws_eip" "nat" {
-  count  = var.enable_nat_gateway ? 1 : 0
+  count  = local.create_vpc && var.enable_nat_gateway ? 1 : 0
   domain = "vpc"
 
   tags = merge(local.common_tags, {
@@ -114,7 +127,7 @@ resource "aws_eip" "nat" {
 }
 
 resource "aws_nat_gateway" "this" {
-  count         = var.enable_nat_gateway ? 1 : 0
+  count         = local.create_vpc && var.enable_nat_gateway ? 1 : 0
   allocation_id = aws_eip.nat[0].id
   subnet_id     = values(aws_subnet.public)[0].id
 
@@ -126,6 +139,7 @@ resource "aws_nat_gateway" "this" {
 }
 
 resource "aws_route_table" "public" {
+  count  = local.create_vpc ? 1 : 0
   vpc_id = local.vpc_id
 
   tags = merge(local.common_tags, {
@@ -134,19 +148,21 @@ resource "aws_route_table" "public" {
 }
 
 resource "aws_route" "public_default" {
-  route_table_id         = aws_route_table.public.id
+  count                  = local.create_vpc ? 1 : 0
+  route_table_id         = aws_route_table.public[0].id
   destination_cidr_block = "0.0.0.0/0"
   gateway_id             = local.internet_gateway_id
 }
 
 resource "aws_route_table_association" "public" {
-  for_each = aws_subnet.public
+  for_each = local.create_vpc ? aws_subnet.public : {}
 
   subnet_id      = each.value.id
-  route_table_id = aws_route_table.public.id
+  route_table_id = aws_route_table.public[0].id
 }
 
 resource "aws_route_table" "private" {
+  count  = local.create_vpc ? 1 : 0
   vpc_id = local.vpc_id
 
   tags = merge(local.common_tags, {
@@ -155,17 +171,17 @@ resource "aws_route_table" "private" {
 }
 
 resource "aws_route" "private_default" {
-  count                  = var.enable_nat_gateway ? 1 : 0
-  route_table_id         = aws_route_table.private.id
+  count                  = local.create_vpc && var.enable_nat_gateway ? 1 : 0
+  route_table_id         = aws_route_table.private[0].id
   destination_cidr_block = "0.0.0.0/0"
   nat_gateway_id         = aws_nat_gateway.this[0].id
 }
 
 resource "aws_route_table_association" "private" {
-  for_each = aws_subnet.private
+  for_each = local.create_vpc ? aws_subnet.private : {}
 
   subnet_id      = each.value.id
-  route_table_id = aws_route_table.private.id
+  route_table_id = aws_route_table.private[0].id
 }
 
 output "vpc_id" {
@@ -173,15 +189,15 @@ output "vpc_id" {
 }
 
 output "public_subnet_ids" {
-  value = [for subnet in values(aws_subnet.public) : subnet.id]
+  value = local.public_subnet_ids
 }
 
 output "database_subnet_ids" {
-  value = [for subnet in values(aws_subnet.database) : subnet.id]
+  value = local.database_subnet_ids
 }
 
 output "private_subnet_ids" {
-  value = [for subnet in values(aws_subnet.private) : subnet.id]
+  value = local.private_subnet_ids
 }
 
 output "internet_gateway_id" {
