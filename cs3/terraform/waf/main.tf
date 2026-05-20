@@ -1,5 +1,5 @@
 resource "aws_wafv2_web_acl" "portal" {
-  name        = "${var.name_prefix}-portal-waf"
+  name        = "${var.name_prefix}-portal-waf-${var.resource_suffix}"
   description = "WAF rules for the CS3 portal"
   scope       = "REGIONAL"
 
@@ -58,7 +58,7 @@ resource "aws_wafv2_web_acl" "portal" {
   }
 
   tags = merge(var.tags, {
-    Name = "${var.name_prefix}-portal-waf"
+    Name = "${var.name_prefix}-portal-waf-${var.resource_suffix}"
   })
 }
 

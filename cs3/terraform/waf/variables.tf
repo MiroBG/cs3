@@ -3,6 +3,12 @@ variable "name_prefix" {
   default = "cs3"
 }
 
+variable "resource_suffix" {
+  type        = string
+  default     = "v2"
+  description = "Suffix appended to resource names to avoid collisions"
+}
+
 variable "rate_limit" {
   type        = number
   default     = 2000

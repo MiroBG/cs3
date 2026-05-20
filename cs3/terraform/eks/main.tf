@@ -27,7 +27,7 @@ data "aws_iam_policy_document" "node_assume_role" {
 }
 
 resource "aws_security_group" "cluster" {
-  name        = "${var.cluster_name}-cluster-sg"
+  name        = "${var.cluster_name}-${var.resource_suffix}-cluster-sg"
   description = "Security group for the EKS control plane"
   vpc_id      = var.vpc_id
 
@@ -47,12 +47,12 @@ resource "aws_security_group" "cluster" {
   }
 
   tags = merge(local.common_tags, {
-    Name = "${var.cluster_name}-cluster-sg"
+    Name = "${var.cluster_name}-${var.resource_suffix}-cluster-sg"
   })
 }
 
 resource "aws_iam_role" "cluster" {
-  name               = "${var.cluster_name}-cluster-role"
+  name               = "${var.cluster_name}-${var.resource_suffix}-cluster-role"
   assume_role_policy = data.aws_iam_policy_document.cluster_assume_role.json
 }
 
@@ -67,7 +67,7 @@ resource "aws_iam_role_policy_attachment" "cluster_vpc_controller_policy" {
 }
 
 resource "aws_eks_cluster" "this" {
-  name     = var.cluster_name
+  name     = "${var.cluster_name}-${var.resource_suffix}"
   role_arn = aws_iam_role.cluster.arn
   version  = var.kubernetes_version
 
@@ -89,7 +89,7 @@ resource "aws_eks_cluster" "this" {
 }
 
 resource "aws_iam_role" "node" {
-  name               = "${var.cluster_name}-node-role"
+  name               = "${var.cluster_name}-${var.resource_suffix}-node-role"
   assume_role_policy = data.aws_iam_policy_document.node_assume_role.json
 }
 
@@ -110,7 +110,7 @@ resource "aws_iam_role_policy_attachment" "node_ecr_policy" {
 
 resource "aws_eks_node_group" "this" {
   cluster_name    = aws_eks_cluster.this.name
-  node_group_name = "${var.cluster_name}-workers"
+  node_group_name = "${var.cluster_name}-${var.resource_suffix}-workers"
   node_role_arn   = aws_iam_role.node.arn
   subnet_ids      = var.subnet_ids
   capacity_type   = var.capacity_type

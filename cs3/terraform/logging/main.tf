@@ -2,7 +2,7 @@ resource "helm_release" "loki" {
   name       = "loki"
   repository = "https://grafana.github.io/helm-charts"
   chart      = "loki-stack"
-  namespace  = var.logging_namespace
+  namespace  = kubernetes_namespace.logging.metadata[0].name
   version    = "2.14.0"
 
   create_namespace = true
@@ -40,14 +40,14 @@ resource "helm_release" "loki" {
 
 resource "kubernetes_namespace" "logging" {
   metadata {
-    name = var.logging_namespace
+    name = "${var.logging_namespace}-${var.resource_suffix}"
   }
 }
 
 resource "kubernetes_config_map" "fluent_bit_config" {
   metadata {
     name      = "fluent-bit-config"
-    namespace = var.logging_namespace
+    namespace = kubernetes_namespace.logging.metadata[0].name
   }
 
   data = {
@@ -58,11 +58,11 @@ resource "kubernetes_config_map" "fluent_bit_config" {
 }
 
 output "loki_endpoint" {
-  value = "http://loki.${var.logging_namespace}:3100"
+  value = "http://loki.${kubernetes_namespace.logging.metadata[0].name}:3100"
 }
 
 output "grafana_endpoint" {
-  value = "http://grafana.${var.logging_namespace}:80"
+  value = "http://grafana.${kubernetes_namespace.logging.metadata[0].name}:80"
 }
 
 output "grafana_admin_user" {

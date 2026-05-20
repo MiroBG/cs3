@@ -38,6 +38,18 @@ variable "enable_nat_gateway" {
   default = true
 }
 
+variable "use_default_vpc" {
+  type        = bool
+  default     = true
+  description = "Reuse the AWS account default VPC instead of creating a new one"
+}
+
+variable "resource_suffix" {
+  type        = string
+  default     = "v2"
+  description = "Suffix appended to resource names to avoid collisions"
+}
+
 variable "cluster_name" {
   type    = string
   default = "cs3-eks-cluster"

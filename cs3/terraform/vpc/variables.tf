@@ -38,6 +38,12 @@ variable "enable_nat_gateway" {
   default = true
 }
 
+variable "use_default_vpc" {
+  type        = bool
+  default     = true
+  description = "Reuse the account default VPC instead of creating a new one"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

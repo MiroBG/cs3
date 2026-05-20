@@ -8,6 +8,12 @@ variable "cluster_name" {
   default = "cs3-eks-cluster"
 }
 
+variable "resource_suffix" {
+  type        = string
+  default     = "v2"
+  description = "Suffix appended to resource names to avoid collisions"
+}
+
 variable "vpc_id" {
   type = string
 }
