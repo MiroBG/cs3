@@ -1,16 +1,6 @@
 name: CS3 Deployment Pipeline
 
 on:
-  pull_request:
-    paths:
-      - "cs3/**"
-      - ".github/workflows/cs3_deploy.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "cs3/**"
-      - ".github/workflows/cs3_deploy.yml"
   workflow_dispatch:
 
 permissions:
