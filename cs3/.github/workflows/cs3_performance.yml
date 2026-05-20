@@ -1,0 +1,43 @@
+name: Performance & Load Testing
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      k6_vus:
+        description: 'K6 virtual users (default 50)'
+        required: false
+        default: '50'
+
+jobs:
+  load_test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run K6 Basic Load Test
+        uses: grafana/k6-action@v0.3.0
+        with:
+          filename: load_tests/k6/basic_load_test.js
+          cloud: false
+        env:
+          K6_HOST: ${{ secrets.PORTAL_URL || 'http://localhost:8080' }}
+
+      - name: Run K6 Portal Load Test
+        uses: grafana/k6-action@v0.3.0
+        with:
+          filename: load_tests/k6/portal_load_test.js
+          cloud: false
+        env:
+          K6_HOST: ${{ secrets.PORTAL_URL || 'http://localhost:8080' }}
+
+      - name: Upload K6 Results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: k6-results
+          path: results/
+          retention-days: 30

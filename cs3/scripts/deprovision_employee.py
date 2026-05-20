@@ -6,7 +6,7 @@ Handles offboarding automation:
 - Revokes Cognito access
 - Marks employee as offboarded in database
 - Logs audit trail
-- Revokes IAM permissions (optional)
+- Revokes IAM permissions and deletes matching IAM user (optional)
 """
 
 import argparse
@@ -64,6 +64,52 @@ def remove_user_from_groups(user_pool_id: str, email: str) -> bool:
         return True
     except Exception as e:
         print(f"✗ Error removing user from groups: {e}")
+        return False
+
+
+def delete_iam_user(iam_username: str) -> bool:
+    """Delete an IAM user after removing attached resources.
+
+    The function is intentionally defensive: it removes access keys, login
+    profile, inline policies, and attached managed policies before deleting the
+    user. If the user does not exist, the cleanup is treated as complete.
+    """
+    try:
+        # Remove access keys
+        response = iam_client.list_access_keys(UserName=iam_username)
+        for access_key in response.get("AccessKeyMetadata", []):
+            iam_client.delete_access_key(
+                UserName=iam_username,
+                AccessKeyId=access_key["AccessKeyId"],
+            )
+
+        # Remove login profile if present
+        try:
+            iam_client.delete_login_profile(UserName=iam_username)
+        except Exception:
+            pass
+
+        # Remove inline policies
+        inline_policies = iam_client.list_user_policies(UserName=iam_username)
+        for policy_name in inline_policies.get("PolicyNames", []):
+            iam_client.delete_user_policy(UserName=iam_username, PolicyName=policy_name)
+
+        # Detach managed policies
+        attached_policies = iam_client.list_attached_user_policies(UserName=iam_username)
+        for policy in attached_policies.get("AttachedPolicies", []):
+            iam_client.detach_user_policy(
+                UserName=iam_username,
+                PolicyArn=policy["PolicyArn"],
+            )
+
+        iam_client.delete_user(UserName=iam_username)
+        print(f"  ✓ Deleted IAM user: {iam_username}")
+        return True
+    except iam_client.exceptions.NoSuchEntityException:
+        print(f"  ℹ IAM user not found, skipping delete: {iam_username}")
+        return True
+    except Exception as e:
+        print(f"✗ Error deleting IAM user {iam_username}: {e}")
         return False
 
 
@@ -126,6 +172,7 @@ def deprovision_employee(
     db_password: str,
     email: str,
     revoke_iam: bool = False,
+    iam_username: str | None = None,
 ) -> bool:
     """Complete employee de-provisioning workflow."""
     print(f"\nStarting de-provisioning for: {email}")
@@ -173,7 +220,10 @@ def deprovision_employee(
 
     # Optional: Revoke IAM permissions
     if revoke_iam:
-        print("  Note: IAM permission revocation not yet implemented")
+        resolved_iam_username = iam_username or email.split("@", 1)[0]
+        if not delete_iam_user(resolved_iam_username):
+            conn.close()
+            return False
 
     conn.close()
     print(f"\n✓ Successfully de-provisioned: {email}")
@@ -191,6 +241,10 @@ def main():
     parser.add_argument(
         "--revoke-iam", action="store_true", help="Also revoke IAM permissions (optional)"
     )
+    parser.add_argument(
+        "--iam-username",
+        help="Optional IAM username to delete; defaults to the email local-part",
+    )
 
     args = parser.parse_args()
 
@@ -202,6 +256,7 @@ def main():
         db_password=args.db_password,
         email=args.email,
         revoke_iam=args.revoke_iam,
+        iam_username=args.iam_username,
     )
 
     sys.exit(0 if success else 1)

@@ -96,3 +96,28 @@ output "grafana_admin_password" {
   sensitive   = true
   description = "Grafana admin password (sensitive)"
 }
+
+output "waf_web_acl_arn" {
+  value       = module.waf.web_acl_arn
+  description = "WAF Web ACL ARN for the portal"
+}
+
+output "waf_web_acl_name" {
+  value       = module.waf.web_acl_name
+  description = "WAF Web ACL name for the portal"
+}
+
+output "swarm_manager_ips" {
+  value       = try(module.docker_swarm[0].swarm_manager_ips, [])
+  description = "Public IPs of Docker Swarm manager nodes (if enabled)"
+}
+
+output "swarm_worker_ips" {
+  value       = try(module.docker_swarm[0].swarm_worker_ips, [])
+  description = "Public IPs of Docker Swarm worker nodes (if enabled)"
+}
+
+output "swarm_security_group_id" {
+  value       = try(module.docker_swarm[0].swarm_security_group_id, null)
+  description = "Security group ID for Docker Swarm cluster (if enabled)"
+}

@@ -146,6 +146,54 @@ variable "grafana_admin_password" {
   description = "Grafana admin password for Loki visualization"
 }
 
+variable "portal_alb_arn" {
+  type        = string
+  default     = null
+  description = "Optional ALB ARN for WAF association"
+}
+
+variable "enable_waf_association" {
+  type        = bool
+  default     = false
+  description = "Enable WAF association when an ALB ARN is available"
+}
+
+variable "waf_rate_limit" {
+  type        = number
+  default     = 2000
+  description = "Rate limit threshold for WAF per IP"
+}
+
+variable "enable_docker_swarm" {
+  type        = bool
+  default     = false
+  description = "Enable Docker Swarm cluster for orchestration comparison (research only)"
+}
+
+variable "swarm_manager_count" {
+  type        = number
+  default     = 3
+  description = "Number of Docker Swarm manager nodes (if enabled)"
+}
+
+variable "swarm_worker_count" {
+  type        = number
+  default     = 3
+  description = "Number of Docker Swarm worker nodes (if enabled)"
+}
+
+variable "swarm_instance_type" {
+  type        = string
+  default     = "t3.medium"
+  description = "EC2 instance type for Swarm nodes"
+}
+
+variable "swarm_key_name" {
+  type        = string
+  default     = ""
+  description = "EC2 key pair name for Swarm node SSH access"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

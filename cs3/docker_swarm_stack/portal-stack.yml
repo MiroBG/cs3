@@ -1,0 +1,96 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ${DB_NAME:-portal}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - portal_network
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  portal:
+    image: ${PORTAL_IMAGE:-portal:latest}
+    environment:
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-changeme}@postgres:5432/${DB_NAME:-portal}
+      FLASK_ENV: production
+    ports:
+      - "8080:5000"
+    depends_on:
+      - postgres
+    networks:
+      - portal_network
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    volumes:
+      - loki_data:/loki
+    networks:
+      - portal_network
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  fluentd:
+    image: fluent/fluentd:latest
+    environment:
+      LOKI_URL: http://loki:3100
+    volumes:
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - portal_network
+    deploy:
+      mode: global
+
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_INSTALL_PLUGINS: grafana-piechart-panel
+    ports:
+      - "3000:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - portal_network
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+    depends_on:
+      - loki
+
+volumes:
+  postgres_data:
+  loki_data:
+  grafana_data:
+
+networks:
+  portal_network:
+    driver: overlay

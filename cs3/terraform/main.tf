@@ -134,3 +134,26 @@ module "logging" {
 
   depends_on = [module.eks]
 }
+
+module "waf" {
+  source = "./waf"
+
+  name_prefix        = var.name_prefix
+  rate_limit         = var.waf_rate_limit
+  portal_alb_arn     = var.portal_alb_arn
+  enable_association = var.enable_waf_association
+  tags               = var.tags
+}
+
+module "docker_swarm" {
+  count = var.enable_docker_swarm ? 1 : 0
+  source = "./docker_swarm"
+
+  swarm_manager_count = var.swarm_manager_count
+  swarm_worker_count  = var.swarm_worker_count
+  instance_type       = var.swarm_instance_type
+  vpc_id              = module.vpc.vpc_id
+  subnet_ids          = module.vpc.public_subnet_ids
+  key_name            = var.swarm_key_name
+  tags                = var.tags
+}
