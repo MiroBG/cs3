@@ -54,7 +54,7 @@ module "vpc" {
   private_subnet_cidrs  = var.private_subnet_cidrs
   database_subnet_cidrs = var.database_subnet_cidrs
   azs                   = var.azs
-  enable_nat_gateway    = var.enable_nat_gateway
+  enable_nat_gateway    = var.enable_nat_gateway && !var.use_default_vpc
   tags                  = var.tags
 }
 
@@ -64,7 +64,7 @@ module "eks" {
   cluster_name                    = var.cluster_name
   vpc_id                          = module.vpc.vpc_id
   vpc_cidr                        = var.vpc_cidr
-  subnet_ids                      = module.vpc.private_subnet_ids
+  subnet_ids                      = var.use_default_vpc ? module.vpc.public_subnet_ids : module.vpc.private_subnet_ids
   kubernetes_version              = var.kubernetes_version
   cluster_endpoint_public_access  = var.cluster_endpoint_public_access
   cluster_endpoint_private_access = var.cluster_endpoint_private_access
@@ -73,6 +73,7 @@ module "eks" {
   desired_size                    = var.desired_size
   min_size                        = var.min_size
   max_size                        = var.max_size
+  resource_suffix                 = var.resource_suffix
   tags                            = var.tags
 }
 
@@ -82,7 +83,8 @@ module "rds" {
   vpc_id               = module.vpc.vpc_id
   vpc_cidr             = var.vpc_cidr
   database_subnet_ids  = module.vpc.database_subnet_ids
-  db_name              = "${var.name_prefix}-employee-db"
+  db_name              = "${var.name_prefix}-employee-db-${var.resource_suffix}"
+  resource_suffix      = var.resource_suffix
   db_database_name     = "employees"
   db_username          = var.db_username
   db_password          = var.db_password
@@ -122,6 +124,7 @@ module "ecr" {
 
   name_prefix  = var.name_prefix
   cluster_name = var.cluster_name
+  resource_suffix = var.resource_suffix
   tags         = var.tags
 }
 
@@ -130,6 +133,7 @@ module "logging" {
 
   logging_namespace      = var.logging_namespace
   grafana_admin_password = var.grafana_admin_password
+  resource_suffix        = var.resource_suffix
   tags                   = var.tags
 
   depends_on = [module.eks]
@@ -142,6 +146,7 @@ module "waf" {
   rate_limit         = var.waf_rate_limit
   portal_alb_arn     = var.portal_alb_arn
   enable_association = var.enable_waf_association
+  resource_suffix    = var.resource_suffix
   tags               = var.tags
 }
 

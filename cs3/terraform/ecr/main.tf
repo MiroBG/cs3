@@ -1,5 +1,5 @@
 resource "aws_ecr_repository" "portal" {
-  name                 = "${var.name_prefix}-portal"
+  name                 = "${var.name_prefix}-portal-${var.resource_suffix}"
   image_tag_mutability = "MUTABLE"
 
   image_scanning_configuration {
@@ -7,7 +7,7 @@ resource "aws_ecr_repository" "portal" {
   }
 
   tags = merge(var.tags, {
-    Name = "${var.name_prefix}-portal-repo"
+    Name = "${var.name_prefix}-portal-${var.resource_suffix}-repo"
   })
 }
 
@@ -33,11 +33,11 @@ resource "aws_ecr_lifecycle_policy" "portal" {
 }
 
 resource "aws_cloudwatch_log_group" "portal" {
-  name              = "/aws/eks/${var.cluster_name}/portal"
+  name              = "/aws/eks/${var.cluster_name}-${var.resource_suffix}/portal"
   retention_in_days = 7
 
   tags = merge(var.tags, {
-    Name = "${var.cluster_name}-portal-logs"
+    Name = "${var.cluster_name}-${var.resource_suffix}-portal-logs"
   })
 }
 
