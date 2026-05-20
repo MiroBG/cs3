@@ -4,7 +4,6 @@ locals {
   })
 }
 
-# Find default VPCs (may be empty list)
 data "aws_vpcs" "default" {
   filter {
     name   = "isDefault"
@@ -12,18 +11,25 @@ data "aws_vpcs" "default" {
   }
 }
 
-# Find default IGW attached to the default VPC when it exists
-data "aws_internet_gateway" "default" {
-  count = var.use_default_vpc && length(data.aws_vpcs.default.ids) > 0 ? 1 : 0
-
+data "aws_vpcs" "managed" {
   filter {
-    name   = "attachment.vpc-id"
-    values = [data.aws_vpcs.default.ids[0]]
+    name   = "tag:Name"
+    values = ["${var.name_prefix}-vpc"]
   }
 }
 
+data "aws_vpcs" "all" {}
+
+locals {
+  default_vpc_id  = length(data.aws_vpcs.default.ids) > 0 ? data.aws_vpcs.default.ids[0] : null
+  managed_vpc_id  = length(data.aws_vpcs.managed.ids) > 0 ? data.aws_vpcs.managed.ids[0] : null
+  any_vpc_id      = length(data.aws_vpcs.all.ids) > 0 ? data.aws_vpcs.all.ids[0] : null
+  selected_vpc_id = var.use_default_vpc && local.default_vpc_id != null ? local.default_vpc_id : coalesce(local.managed_vpc_id, local.any_vpc_id)
+  create_vpc      = local.selected_vpc_id == null
+}
+
 resource "aws_vpc" "this" {
-  count                = var.use_default_vpc && length(data.aws_vpcs.default.ids) > 0 ? 0 : 1
+  count                = local.create_vpc ? 1 : 0
   cidr_block           = var.vpc_cidr
   enable_dns_support   = true
   enable_dns_hostnames = true
@@ -33,20 +39,28 @@ resource "aws_vpc" "this" {
   })
 }
 
+data "aws_internet_gateway" "selected" {
+  count = local.selected_vpc_id != null ? 1 : 0
+
+  filter {
+    name   = "attachment.vpc-id"
+    values = [local.selected_vpc_id]
+  }
+}
+
+locals {
+  selected_igw_id     = local.selected_vpc_id != null ? try(data.aws_internet_gateway.selected[0].id, null) : null
+  vpc_id              = local.create_vpc ? aws_vpc.this[0].id : local.selected_vpc_id
+  internet_gateway_id = local.selected_igw_id != null ? local.selected_igw_id : aws_internet_gateway.this[0].id
+}
+
 resource "aws_internet_gateway" "this" {
-  count  = var.use_default_vpc && length(data.aws_vpcs.default.ids) > 0 ? 0 : 1
-  vpc_id = aws_vpc.this[0].id
+  count  = local.selected_igw_id != null ? 0 : 1
+  vpc_id = local.vpc_id
 
   tags = merge(local.common_tags, {
     Name = "${var.name_prefix}-igw"
   })
-}
-
-locals {
-  default_vpc_id      = length(data.aws_vpcs.default.ids) > 0 ? data.aws_vpcs.default.ids[0] : null
-  default_igw_id      = length(data.aws_internet_gateway.default) > 0 ? data.aws_internet_gateway.default[0].id : null
-  vpc_id              = var.use_default_vpc && local.default_vpc_id != null ? local.default_vpc_id : aws_vpc.this[0].id
-  internet_gateway_id = var.use_default_vpc && local.default_igw_id != null ? local.default_igw_id : aws_internet_gateway.this[0].id
 }
 
 resource "aws_subnet" "public" {
@@ -91,7 +105,7 @@ resource "aws_subnet" "database" {
 }
 
 resource "aws_eip" "nat" {
-  count  = var.enable_nat_gateway && !var.use_default_vpc ? 1 : 0
+  count  = var.enable_nat_gateway ? 1 : 0
   domain = "vpc"
 
   tags = merge(local.common_tags, {
@@ -100,7 +114,7 @@ resource "aws_eip" "nat" {
 }
 
 resource "aws_nat_gateway" "this" {
-  count         = var.enable_nat_gateway && !var.use_default_vpc ? 1 : 0
+  count         = var.enable_nat_gateway ? 1 : 0
   allocation_id = aws_eip.nat[0].id
   subnet_id     = values(aws_subnet.public)[0].id
 
@@ -141,7 +155,7 @@ resource "aws_route_table" "private" {
 }
 
 resource "aws_route" "private_default" {
-  count                  = var.enable_nat_gateway && !var.use_default_vpc ? 1 : 0
+  count                  = var.enable_nat_gateway ? 1 : 0
   route_table_id         = aws_route_table.private.id
   destination_cidr_block = "0.0.0.0/0"
   nat_gateway_id         = aws_nat_gateway.this[0].id

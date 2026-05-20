@@ -46,7 +46,7 @@ variable "use_default_vpc" {
 
 variable "resource_suffix" {
   type        = string
-  default     = "v2"
+  default     = "v3"
   description = "Suffix appended to resource names to avoid collisions"
 }
 
@@ -125,7 +125,7 @@ variable "db_multi_az" {
 variable "cognito_domain" {
   type        = string
   description = "Cognito domain name (must be globally unique)"
-  default     = "cs3-employees-prod"
+  default     = "cs3-employees-prod-v3"
 }
 
 variable "cognito_callback_urls" {

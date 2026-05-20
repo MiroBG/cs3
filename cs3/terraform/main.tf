@@ -96,7 +96,7 @@ module "rds" {
 
 # Cognito Identity Pool for federated access
 resource "aws_cognito_identity_pool" "this" {
-  identity_pool_name               = "${var.name_prefix}-identity-pool"
+  identity_pool_name               = "${var.name_prefix}-identity-pool-${var.resource_suffix}"
   allow_unauthenticated_identities = false
 
   supported_login_providers = {
@@ -109,7 +109,7 @@ resource "aws_cognito_identity_pool" "this" {
 module "cognito" {
   source = "./cognito"
 
-  user_pool_name       = "${var.name_prefix}-employees"
+  user_pool_name       = "${var.name_prefix}-employees-${var.resource_suffix}"
   cognito_domain       = var.cognito_domain
   aws_region           = var.region
   callback_urls        = var.cognito_callback_urls
