@@ -1,0 +1,84 @@
+name: CS3 Destroy Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_destroy:
+        description: "Type DESTROY to confirm"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: eu-central-1
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  destroy:
+    name: Terraform Destroy (cs3 manual)
+    if: github.event.inputs.confirm_destroy == 'DESTROY'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cs3/terraform
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Validate required secrets
+        run: |
+          test -n "${{ secrets.AWS_ROLE_TO_ASSUME || secrets.AWS_ROLE_ARN || vars.AWS_ROLE_TO_ASSUME || vars.AWS_ROLE_ARN }}" || (echo "Missing role input: set AWS_ROLE_TO_ASSUME (or AWS_ROLE_ARN) in Secrets or Variables" && exit 1)
+          test -n "${{ secrets.TF_BACKEND_BUCKET || vars.TF_BACKEND_BUCKET }}" || (echo "Missing backend bucket: set TF_BACKEND_BUCKET in Secrets or Variables" && exit 1)
+          test -n "${{ secrets.TF_STATE_KEY || vars.TF_STATE_KEY }}" || (echo "Missing state key: set TF_STATE_KEY in Secrets or Variables" && exit 1)
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_TO_ASSUME || secrets.AWS_ROLE_ARN || vars.AWS_ROLE_TO_ASSUME || vars.AWS_ROLE_ARN }}
+          role-session-name: github-actions-cs3-destroy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Generate backend.hcl
+        run: |
+          STATE_KEY="${{ secrets.TF_STATE_KEY || vars.TF_STATE_KEY }}"
+          cat > backend.hcl <<EOF
+          bucket         = "${{ secrets.TF_BACKEND_BUCKET || vars.TF_BACKEND_BUCKET }}"
+          key            = "${STATE_KEY}"
+          region         = "${{ env.AWS_REGION }}"
+          encrypt        = true
+          dynamodb_table = "terraform-locks"
+          EOF
+
+      - name: Terraform init
+        run: terraform init -reconfigure -backend-config=backend.hcl
+
+      - name: Set Terraform variable overrides
+        run: |
+          DB_PASSWORD="${{ secrets.CS3_DB_PASSWORD || vars.CS3_DB_PASSWORD }}"
+          if [[ -n "$DB_PASSWORD" ]]; then
+            echo "TF_VAR_db_password=$DB_PASSWORD" >> "$GITHUB_ENV"
+          fi
+
+          COGNITO_CALLBACK="${{ secrets.CS3_COGNITO_CALLBACK_URL || vars.CS3_COGNITO_CALLBACK_URL }}"
+          if [[ -n "$COGNITO_CALLBACK" ]]; then
+            echo "TF_VAR_cognito_callback_url=$COGNITO_CALLBACK" >> "$GITHUB_ENV"
+          fi
+
+      - name: Terraform destroy
+        run: terraform destroy -auto-approve
+
+  destroy_rejected:
+    name: Destroy rejected (missing confirmation)
+    if: github.event.inputs.confirm_destroy != 'DESTROY'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if not confirmed
+        run: |
+          echo "Destroy not confirmed. Re-run workflow and set confirm_destroy to DESTROY."
+          exit 1
