@@ -227,6 +227,100 @@ jobs:
       - name: Terraform init
         run: terraform init -reconfigure -backend-config=backend.hcl
 
+      - name: Auto-import existing AWS resources
+        run: |
+          set -euo pipefail
+          echo "Auto-import: detecting existing AWS resources and importing into Terraform state if present"
+
+          # derive names from TF vars (workflow sets TF_VAR_ env vars earlier)
+          NAME_PREFIX="${TF_VAR_name_prefix:-cs3}"
+          RESOURCE_SUFFIX="${TF_VAR_resource_suffix:-v6}"
+          CLUSTER_NAME="${TF_VAR_cluster_name:-cs3-eks-cluster}"
+          AWS_REGION="${{ env.AWS_REGION }}"
+
+          ECR_REPO_NAME="${NAME_PREFIX}-portal-${RESOURCE_SUFFIX}"
+          LOG_GROUP_NAME="/aws/eks/${CLUSTER_NAME}-${RESOURCE_SUFFIX}/portal"
+          EKS_CLUSTER_SG_NAME="${CLUSTER_NAME}-${RESOURCE_SUFFIX}-cluster-sg"
+          RDS_SG_NAME="${NAME_PREFIX}-employee-db-${RESOURCE_SUFFIX}-sg"
+          RDS_SUBNET_GROUP_NAME="${NAME_PREFIX}-employee-db-${RESOURCE_SUFFIX}-subnet-group"
+          WAF_NAME="${NAME_PREFIX}-portal-waf-${RESOURCE_SUFFIX}"
+          COGNITO_ROLE_NAME="${NAME_PREFIX}-employees-${RESOURCE_SUFFIX}-authenticated-role"
+          EKS_CLUSTER_ROLE_NAME="${CLUSTER_NAME}-${RESOURCE_SUFFIX}-cluster-role"
+          EKS_NODE_ROLE_NAME="${CLUSTER_NAME}-${RESOURCE_SUFFIX}-node-role"
+
+          export TF_IN_AUTOMATION=true
+          set +e
+          echo "Looking up and importing resources (non-fatal)"
+
+          # 1) ECR repo
+          if aws ecr describe-repositories --repository-names "$ECR_REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "Importing ECR repository: $ECR_REPO_NAME"
+            terraform import -lock=false module.ecr.aws_ecr_repository.portal "$ECR_REPO_NAME" || echo "Import ECR failed (continuing)"
+          fi
+
+          # 2) CloudWatch Log Group
+          LG=$(aws logs describe-log-groups --log-group-name-prefix "$LOG_GROUP_NAME" --region "$AWS_REGION" --query "logGroups[?logGroupName=='$LOG_GROUP_NAME'].logGroupName | [0]" --output text 2>/dev/null || true)
+          if [[ -n "$LG" && "$LG" != "None" ]]; then
+            echo "Importing CloudWatch log group: $LG"
+            terraform import -lock=false module.ecr.aws_cloudwatch_log_group.portal "$LG" || echo "Import log group failed (continuing)"
+          fi
+
+          # 3) EKS cluster security group
+          SG_EKS=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$EKS_CLUSTER_SG_NAME" --query 'SecurityGroups[0].GroupId' --region "$AWS_REGION" --output text 2>/dev/null || true)
+          if [[ -n "$SG_EKS" && "$SG_EKS" != "None" ]]; then
+            echo "Importing EKS cluster security group: $SG_EKS"
+            terraform import -lock=false module.eks.aws_security_group.cluster "$SG_EKS" || echo "Import EKS SG failed (continuing)"
+          fi
+
+          # 4) RDS security group
+          SG_RDS=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$RDS_SG_NAME" --query 'SecurityGroups[0].GroupId' --region "$AWS_REGION" --output text 2>/dev/null || true)
+          if [[ -n "$SG_RDS" && "$SG_RDS" != "None" ]]; then
+            echo "Importing RDS security group: $SG_RDS"
+            terraform import -lock=false module.rds.aws_security_group.rds "$SG_RDS" || echo "Import RDS SG failed (continuing)"
+          fi
+
+          # 5) IAM roles: cluster, node, cognito-authenticated
+          if aws iam get-role --role-name "$EKS_CLUSTER_ROLE_NAME" >/dev/null 2>&1; then
+            ARN=$(aws iam get-role --role-name "$EKS_CLUSTER_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
+            if [[ -n "$ARN" ]]; then
+              echo "Importing IAM role (cluster): $ARN"
+              terraform import -lock=false module.eks.aws_iam_role.cluster "$ARN" || echo "Import IAM cluster role failed"
+            fi
+          fi
+
+          if aws iam get-role --role-name "$EKS_NODE_ROLE_NAME" >/dev/null 2>&1; then
+            ARN=$(aws iam get-role --role-name "$EKS_NODE_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
+            if [[ -n "$ARN" ]]; then
+              echo "Importing IAM role (node): $ARN"
+              terraform import -lock=false module.eks.aws_iam_role.node "$ARN" || echo "Import IAM node role failed"
+            fi
+          fi
+
+          if aws iam get-role --role-name "$COGNITO_ROLE_NAME" >/dev/null 2>&1; then
+            ARN=$(aws iam get-role --role-name "$COGNITO_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
+            if [[ -n "$ARN" ]]; then
+              echo "Importing IAM role (cognito authenticated): $ARN"
+              terraform import -lock=false module.cognito.aws_iam_role.cognito_authenticated "$ARN" || echo "Import IAM cognito role failed"
+            fi
+          fi
+
+          # 6) RDS DB subnet group
+          if aws rds describe-db-subnet-groups --db-subnet-group-name "$RDS_SUBNET_GROUP_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "Importing RDS DB subnet group: $RDS_SUBNET_GROUP_NAME"
+            terraform import -lock=false module.rds.aws_db_subnet_group.this "$RDS_SUBNET_GROUP_NAME" || echo "Import RDS subnet group failed"
+          fi
+
+          # 7) WAFv2 Web ACL (regional)
+          WAF_ARN=$(aws wafv2 list-web-acls --scope REGIONAL --region "$AWS_REGION" --query "WebACLs[?Name=='$WAF_NAME'].ARN | [0]" --output text 2>/dev/null || true)
+          if [[ -n "$WAF_ARN" && "$WAF_ARN" != "None" ]]; then
+            echo "Importing WAFv2 Web ACL: $WAF_ARN"
+            terraform import -lock=false module.waf.aws_wafv2_web_acl.portal "$WAF_ARN" || echo "Import WAF failed"
+          fi
+
+          # summary
+          echo "Auto-import complete (some imports may have failed but we'll continue)."
+          set -e
+
       - name: Set Terraform variables from secrets
         run: |
           DB_PASSWORD="${{ secrets.CS3_DB_PASSWORD }}"
