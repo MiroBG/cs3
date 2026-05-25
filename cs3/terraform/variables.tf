@@ -50,6 +50,19 @@ variable "resource_suffix" {
   description = "Suffix appended to resource names to avoid collisions"
 }
 
+variable "kubernetes_host" {
+  type        = string
+  default     = ""
+  description = "EKS API server endpoint for Kubernetes and Helm provider setup"
+}
+
+variable "kubernetes_cluster_ca_certificate" {
+  type        = string
+  default     = ""
+  sensitive   = true
+  description = "Base64-encoded EKS cluster CA certificate for Kubernetes and Helm provider setup"
+}
+
 variable "cluster_name" {
   type    = string
   default = "cs3-eks-cluster"

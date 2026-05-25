@@ -58,6 +58,7 @@ jobs:
           test -n "${{ secrets.AWS_ROLE_TO_ASSUME || vars.AWS_ROLE_TO_ASSUME }}" || (echo "Missing AWS_ROLE_TO_ASSUME" && exit 1)
           test -n "${{ secrets.TF_BACKEND_BUCKET || vars.TF_BACKEND_BUCKET }}" || (echo "Missing TF_BACKEND_BUCKET" && exit 1)
           test -n "${{ secrets.CS3_DB_PASSWORD || vars.CS3_DB_PASSWORD }}" || (echo "Missing CS3_DB_PASSWORD" && exit 1)
+          test -n "${{ secrets.GRAFANA_ADMIN_PASSWORD }}" || (echo "Missing GRAFANA_ADMIN_PASSWORD" && exit 1)
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -94,6 +95,16 @@ jobs:
           if [[ -n "$GRAFANA_PASSWORD" ]]; then
             echo "TF_VAR_grafana_admin_password=$GRAFANA_PASSWORD" >> "$GITHUB_ENV"
           fi
+          EKS_CLUSTER_NAME="${TF_VAR_cluster_name:-cs3-eks-cluster}-${TF_VAR_resource_suffix:-v6}"
+          EKS_ENDPOINT=$(aws eks describe-cluster --name "$EKS_CLUSTER_NAME" --region "${{ env.AWS_REGION }}" --query 'cluster.endpoint' --output text 2>/dev/null || true)
+          EKS_CA=$(aws eks describe-cluster --name "$EKS_CLUSTER_NAME" --region "${{ env.AWS_REGION }}" --query 'cluster.certificateAuthority.data' --output text 2>/dev/null || true)
+          if [[ -n "$EKS_ENDPOINT" && "$EKS_ENDPOINT" != "None" && -n "$EKS_CA" && "$EKS_CA" != "None" ]]; then
+            echo "TF_VAR_kubernetes_host=$EKS_ENDPOINT" >> "$GITHUB_ENV"
+            echo "TF_VAR_kubernetes_cluster_ca_certificate=$EKS_CA" >> "$GITHUB_ENV"
+          else
+            echo "ERROR: Could not resolve EKS connection details for $EKS_CLUSTER_NAME. The cluster must already exist before auto-import runs."
+            exit 1
+          fi
           echo "TF_VAR_resource_suffix=v6" >> "$GITHUB_ENV"
           echo "TF_VAR_use_default_vpc=true" >> "$GITHUB_ENV"
           echo "TF_VAR_manage_cognito_domain=false" >> "$GITHUB_ENV"
@@ -107,6 +118,7 @@ jobs:
           NAME_PREFIX="${TF_VAR_name_prefix:-cs3}"
           RESOURCE_SUFFIX="${TF_VAR_resource_suffix:-v6}"
           CLUSTER_NAME="${TF_VAR_cluster_name:-cs3-eks-cluster}"
+          EKS_CLUSTER_NAME="${CLUSTER_NAME}-${RESOURCE_SUFFIX}"
           AWS_REGION="${{ env.AWS_REGION }}"
 
           ECR_REPO_NAME="${NAME_PREFIX}-portal-${RESOURCE_SUFFIX}"
@@ -118,6 +130,16 @@ jobs:
           COGNITO_ROLE_NAME="${NAME_PREFIX}-employees-${RESOURCE_SUFFIX}-authenticated-role"
           EKS_CLUSTER_ROLE_NAME="${CLUSTER_NAME}-${RESOURCE_SUFFIX}-cluster-role"
           EKS_NODE_ROLE_NAME="${CLUSTER_NAME}-${RESOURCE_SUFFIX}-node-role"
+
+          if aws eks describe-cluster --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "Importing EKS cluster: $EKS_CLUSTER_NAME"
+            terraform import -input=false -lock=false module.eks.aws_eks_cluster.this "$EKS_CLUSTER_NAME" || echo "Import EKS cluster failed (continuing)"
+          fi
+
+          if aws eks describe-nodegroup --cluster-name "$EKS_CLUSTER_NAME" --nodegroup-name "${EKS_CLUSTER_NAME}-workers" --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo "Importing EKS node group: ${EKS_CLUSTER_NAME}:workers"
+            terraform import -input=false -lock=false module.eks.aws_eks_node_group.this "${EKS_CLUSTER_NAME}:${EKS_CLUSTER_NAME}-workers" || echo "Import EKS node group failed (continuing)"
+          fi
 
           export TF_IN_AUTOMATION=true
           set +e
@@ -152,26 +174,23 @@ jobs:
 
           # 5) IAM roles: cluster, node, cognito-authenticated
           if aws iam get-role --role-name "$EKS_CLUSTER_ROLE_NAME" >/dev/null 2>&1; then
-            ARN=$(aws iam get-role --role-name "$EKS_CLUSTER_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
-            if [[ -n "$ARN" ]]; then
-              echo "Importing IAM role (cluster): $ARN"
-              terraform import -input=false -lock=false module.eks.aws_iam_role.cluster "$ARN" || echo "Import IAM cluster role failed"
+            if [[ -n "$EKS_CLUSTER_ROLE_NAME" ]]; then
+              echo "Importing IAM role (cluster): $EKS_CLUSTER_ROLE_NAME"
+              terraform import -input=false -lock=false module.eks.aws_iam_role.cluster "$EKS_CLUSTER_ROLE_NAME" || echo "Import IAM cluster role failed"
             fi
           fi
 
           if aws iam get-role --role-name "$EKS_NODE_ROLE_NAME" >/dev/null 2>&1; then
-            ARN=$(aws iam get-role --role-name "$EKS_NODE_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
-            if [[ -n "$ARN" ]]; then
-              echo "Importing IAM role (node): $ARN"
-              terraform import -input=false -lock=false module.eks.aws_iam_role.node "$ARN" || echo "Import IAM node role failed"
+            if [[ -n "$EKS_NODE_ROLE_NAME" ]]; then
+              echo "Importing IAM role (node): $EKS_NODE_ROLE_NAME"
+              terraform import -input=false -lock=false module.eks.aws_iam_role.node "$EKS_NODE_ROLE_NAME" || echo "Import IAM node role failed"
             fi
           fi
 
           if aws iam get-role --role-name "$COGNITO_ROLE_NAME" >/dev/null 2>&1; then
-            ARN=$(aws iam get-role --role-name "$COGNITO_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
-            if [[ -n "$ARN" ]]; then
-              echo "Importing IAM role (cognito authenticated): $ARN"
-              terraform import -input=false -lock=false module.cognito.aws_iam_role.cognito_authenticated "$ARN" || echo "Import IAM cognito role failed"
+            if [[ -n "$COGNITO_ROLE_NAME" ]]; then
+              echo "Importing IAM role (cognito authenticated): $COGNITO_ROLE_NAME"
+              terraform import -input=false -lock=false module.cognito.aws_iam_role.cognito_authenticated "$COGNITO_ROLE_NAME" || echo "Import IAM cognito role failed"
             fi
           fi
 
@@ -182,10 +201,11 @@ jobs:
           fi
 
           # 7) WAFv2 Web ACL (regional)
-          WAF_ARN=$(aws wafv2 list-web-acls --scope REGIONAL --region "$AWS_REGION" --query "WebACLs[?Name=='$WAF_NAME'].ARN | [0]" --output text 2>/dev/null || true)
-          if [[ -n "$WAF_ARN" && "$WAF_ARN" != "None" ]]; then
-            echo "Importing WAFv2 Web ACL: $WAF_ARN"
-            terraform import -input=false -lock=false module.waf.aws_wafv2_web_acl.portal "$WAF_ARN" || echo "Import WAF failed"
+          WAF_ID=$(aws wafv2 list-web-acls --scope REGIONAL --region "$AWS_REGION" --query "WebACLs[?Name=='$WAF_NAME'].Id | [0]" --output text 2>/dev/null || true)
+          if [[ -n "$WAF_ID" && "$WAF_ID" != "None" ]]; then
+            WAF_IMPORT_ID="$WAF_ID/$WAF_NAME/REGIONAL"
+            echo "Importing WAFv2 Web ACL: $WAF_IMPORT_ID"
+            terraform import -input=false -lock=false module.waf.aws_wafv2_web_acl.portal "$WAF_IMPORT_ID" || echo "Import WAF failed"
           fi
 
           # summary
@@ -228,6 +248,7 @@ jobs:
           test -n "${{ secrets.AWS_ROLE_TO_ASSUME || vars.AWS_ROLE_TO_ASSUME }}" || (echo "Missing AWS_ROLE_TO_ASSUME" && exit 1)
           test -n "${{ secrets.TF_BACKEND_BUCKET || vars.TF_BACKEND_BUCKET }}" || (echo "Missing TF_BACKEND_BUCKET" && exit 1)
           test -n "${{ secrets.CS3_DB_PASSWORD }}" || (echo "Missing CS3_DB_PASSWORD (must be in Secrets, not Variables)" && exit 1)
+          test -n "${{ secrets.GRAFANA_ADMIN_PASSWORD }}" || (echo "Missing GRAFANA_ADMIN_PASSWORD" && exit 1)
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -263,6 +284,19 @@ jobs:
           fi
           if [[ -n "$GRAFANA_PASSWORD" ]]; then
             echo "TF_VAR_grafana_admin_password=$GRAFANA_PASSWORD" >> "$GITHUB_ENV"
+          else
+            echo "ERROR: GRAFANA_ADMIN_PASSWORD not set in Secrets. Aborting to avoid interactive prompt."
+            exit 1
+          fi
+          EKS_CLUSTER_NAME="${TF_VAR_cluster_name:-cs3-eks-cluster}-${TF_VAR_resource_suffix:-v6}"
+          EKS_ENDPOINT=$(aws eks describe-cluster --name "$EKS_CLUSTER_NAME" --region "${{ env.AWS_REGION }}" --query 'cluster.endpoint' --output text 2>/dev/null || true)
+          EKS_CA=$(aws eks describe-cluster --name "$EKS_CLUSTER_NAME" --region "${{ env.AWS_REGION }}" --query 'cluster.certificateAuthority.data' --output text 2>/dev/null || true)
+          if [[ -n "$EKS_ENDPOINT" && "$EKS_ENDPOINT" != "None" && -n "$EKS_CA" && "$EKS_CA" != "None" ]]; then
+            echo "TF_VAR_kubernetes_host=$EKS_ENDPOINT" >> "$GITHUB_ENV"
+            echo "TF_VAR_kubernetes_cluster_ca_certificate=$EKS_CA" >> "$GITHUB_ENV"
+          else
+            echo "ERROR: Could not resolve EKS connection details for $EKS_CLUSTER_NAME. The cluster must already exist before auto-import runs."
+            exit 1
           fi
           echo "TF_VAR_resource_suffix=v6" >> "$GITHUB_ENV"
           echo "TF_VAR_use_default_vpc=true" >> "$GITHUB_ENV"

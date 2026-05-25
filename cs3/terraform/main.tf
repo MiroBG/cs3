@@ -21,29 +21,33 @@ terraform {
   }
 }
 
+locals {
+  eks_cluster_name = "${var.cluster_name}-${var.resource_suffix}"
+}
+
 provider "aws" {
   region = var.region
 }
 
 provider "kubernetes" {
-  host                   = module.eks.cluster_endpoint
-  cluster_ca_certificate = base64decode(module.eks.cluster_ca_certificate)
+  host                   = var.kubernetes_host
+  cluster_ca_certificate = base64decode(var.kubernetes_cluster_ca_certificate)
 
   exec {
     api_version = "client.authentication.k8s.io/v1beta1"
     command     = "aws"
-    args        = ["eks", "get-token", "--cluster-name", module.eks.cluster_name, "--region", var.region]
+    args        = ["eks", "get-token", "--cluster-name", local.eks_cluster_name, "--region", var.region]
   }
 }
 
 data "aws_eks_cluster_auth" "this" {
-  name = module.eks.cluster_name
+  name = local.eks_cluster_name
 }
 
 provider "helm" {
   kubernetes {
-    host                   = module.eks.cluster_endpoint
-    cluster_ca_certificate = base64decode(module.eks.cluster_ca_certificate)
+    host                   = var.kubernetes_host
+    cluster_ca_certificate = base64decode(var.kubernetes_cluster_ca_certificate)
     token                  = data.aws_eks_cluster_auth.this.token
   }
 }
