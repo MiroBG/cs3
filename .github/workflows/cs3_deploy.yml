@@ -82,6 +82,7 @@ jobs:
       - name: "Pre-import: Set Terraform variables from secrets"
         env:
           DB_PASSWORD: "${{ secrets.CS3_DB_PASSWORD || vars.CS3_DB_PASSWORD }}"
+          GRAFANA_PASSWORD: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
         run: |
           # Ensure imports and terraform commands don't prompt for required vars
           if [[ -n "$DB_PASSWORD" ]]; then
@@ -89,6 +90,9 @@ jobs:
           else
             echo "ERROR: CS3_DB_PASSWORD not set in secrets or variables. Aborting to avoid interactive prompt."
             exit 1
+          fi
+          if [[ -n "$GRAFANA_PASSWORD" ]]; then
+            echo "TF_VAR_grafana_admin_password=$GRAFANA_PASSWORD" >> "$GITHUB_ENV"
           fi
           echo "TF_VAR_resource_suffix=v6" >> "$GITHUB_ENV"
           echo "TF_VAR_use_default_vpc=true" >> "$GITHUB_ENV"
@@ -190,10 +194,13 @@ jobs:
 
       - name: Terraform plan
         env:
+          TF_LOG: DEBUG
           TF_VAR_resource_suffix: "v6"
+          TF_VAR_db_password: "${{ secrets.CS3_DB_PASSWORD }}"
+          TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
           TF_VAR_manage_cognito_domain: "false"
-        run: terraform plan -input=false -var="db_password=${{ secrets.CS3_DB_PASSWORD || vars.CS3_DB_PASSWORD }}" -out=tfplan
+        run: terraform plan -input=false -out=tfplan
 
       - name: Upload plan
         uses: actions/upload-artifact@v4
@@ -245,6 +252,7 @@ jobs:
       - name: "Pre-import: Set Terraform variables from secrets"
         env:
           DB_PASSWORD: "${{ secrets.CS3_DB_PASSWORD || vars.CS3_DB_PASSWORD }}"
+          GRAFANA_PASSWORD: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
         run: |
           # Ensure imports and terraform commands don't prompt for required vars
           if [[ -n "$DB_PASSWORD" ]]; then
@@ -252,6 +260,9 @@ jobs:
           else
             echo "ERROR: CS3_DB_PASSWORD not set in secrets or variables. Aborting to avoid interactive prompt."
             exit 1
+          fi
+          if [[ -n "$GRAFANA_PASSWORD" ]]; then
+            echo "TF_VAR_grafana_admin_password=$GRAFANA_PASSWORD" >> "$GITHUB_ENV"
           fi
           echo "TF_VAR_resource_suffix=v6" >> "$GITHUB_ENV"
           echo "TF_VAR_use_default_vpc=true" >> "$GITHUB_ENV"
@@ -364,7 +375,7 @@ jobs:
           TF_LOG: DEBUG
           TF_VAR_resource_suffix: "v6"
           TF_VAR_db_password: "${{ secrets.CS3_DB_PASSWORD }}"
-          TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD || secrets.CS3_GRAFANA_ADMIN_PASSWORD }}"
+          TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
           TF_VAR_manage_cognito_domain: "false"
         run: terraform plan -input=false -out=tfplan
@@ -373,7 +384,7 @@ jobs:
         env:
           TF_VAR_resource_suffix: "v6"
           TF_VAR_db_password: "${{ secrets.CS3_DB_PASSWORD }}"
-          TF_VAR_grafana_admin_password: "grafana123@"
+          TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
           TF_VAR_manage_cognito_domain: "false"
         run: terraform apply -auto-approve tfplan
