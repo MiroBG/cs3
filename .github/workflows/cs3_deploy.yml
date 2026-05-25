@@ -113,6 +113,7 @@ jobs:
           COGNITO_USER_POOL_NAME="${NAME_PREFIX}-employees${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           COGNITO_IDENTITY_POOL_NAME="${NAME_PREFIX}-identity-pool${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           WAF_NAME="${NAME_PREFIX}-portal-waf${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          COGNITO_ROLE_NAME="${COGNITO_USER_POOL_NAME}-authenticated-role"
 
           export TF_IN_AUTOMATION=true
           set +e
@@ -147,11 +148,7 @@ jobs:
             fi
           fi
 
-          # 6) RDS DB subnet group
-          if aws rds describe-db-subnet-groups --db-subnet-group-name "$RDS_SUBNET_GROUP_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
-            echo "Importing RDS DB subnet group: $RDS_SUBNET_GROUP_NAME"
-            terraform import -input=false -lock=false module.rds.aws_db_subnet_group.this "$RDS_SUBNET_GROUP_NAME" || echo "Import RDS subnet group failed"
-          fi
+          # RDS is removed from CS3; skipping RDS imports
 
           # 7) WAFv2 Web ACL (regional)
           WAF_ID=$(aws wafv2 list-web-acls --scope REGIONAL --region "$AWS_REGION" --query "WebACLs[?Name=='$WAF_NAME'].Id | [0]" --output text 2>/dev/null || true)
@@ -257,6 +254,7 @@ jobs:
           ECR_REPO_NAME="${NAME_PREFIX}-portal${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           COGNITO_USER_POOL_NAME="${NAME_PREFIX}-employees${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           COGNITO_IDENTITY_POOL_NAME="${NAME_PREFIX}-identity-pool${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          COGNITO_ROLE_NAME="${COGNITO_USER_POOL_NAME}-authenticated-role"
 
           export TF_IN_AUTOMATION=true
           set +e
@@ -282,36 +280,10 @@ jobs:
           fi
 
           echo "✓ Auto-import phase complete"
-            terraform import -input=false -lock=false module.eks.aws_security_group.cluster "$SG_EKS" || echo "Import EKS SG failed (continuing)"
-          fi
 
-          # 4) RDS security group
-          SG_RDS=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$RDS_SG_NAME" --query 'SecurityGroups[0].GroupId' --region "$AWS_REGION" --output text 2>/dev/null || true)
-          if [[ -n "$SG_RDS" && "$SG_RDS" != "None" ]]; then
-            echo "Importing RDS security group: $SG_RDS"
-            terraform import -input=false -lock=false module.rds.aws_security_group.rds "$SG_RDS" || echo "Import RDS SG failed (continuing)"
-          fi
+          # RDS security group import skipped (RDS removed from CS3)
 
-          # 5) IAM roles: cluster, node, cognito-authenticated
-          if [[ "${TF_VAR_skip_eks_import:-false}" != "true" ]]; then
-            if aws iam get-role --role-name "$EKS_CLUSTER_ROLE_NAME" >/dev/null 2>&1; then
-              ARN=$(aws iam get-role --role-name "$EKS_CLUSTER_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
-              if [[ -n "$ARN" ]]; then
-                echo "Importing IAM role (cluster): $ARN"
-                terraform import -input=false -lock=false module.eks.aws_iam_role.cluster "$ARN" || echo "Import IAM cluster role failed"
-              fi
-            fi
-
-            if aws iam get-role --role-name "$EKS_NODE_ROLE_NAME" >/dev/null 2>&1; then
-              ARN=$(aws iam get-role --role-name "$EKS_NODE_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
-              if [[ -n "$ARN" ]]; then
-                echo "Importing IAM role (node): $ARN"
-                terraform import -input=false -lock=false module.eks.aws_iam_role.node "$ARN" || echo "Import IAM node role failed"
-              fi
-            fi
-          else
-            echo "Skipping EKS IAM role imports because TF_VAR_skip_eks_import=true"
-          fi
+          # Skipping EKS IAM role imports (EKS removed from CS3)
 
           if aws iam get-role --role-name "$COGNITO_ROLE_NAME" >/dev/null 2>&1; then
             echo "Importing IAM role (cognito authenticated): $COGNITO_ROLE_NAME"
@@ -344,11 +316,7 @@ jobs:
             fi
           fi
 
-          # 6) RDS DB subnet group
-          if aws rds describe-db-subnet-groups --db-subnet-group-name "$RDS_SUBNET_GROUP_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
-            echo "Importing RDS DB subnet group: $RDS_SUBNET_GROUP_NAME"
-            terraform import -input=false -lock=false module.rds.aws_db_subnet_group.this "$RDS_SUBNET_GROUP_NAME" || echo "Import RDS subnet group failed"
-          fi
+          # RDS is removed from CS3; skipping RDS imports
 
           # 7) WAFv2 Web ACL (regional)
           WAF_ARN=$(aws wafv2 list-web-acls --scope REGIONAL --region "$AWS_REGION" --query "WebACLs[?Name=='$WAF_NAME'].ARN | [0]" --output text 2>/dev/null || true)
@@ -413,7 +381,7 @@ jobs:
           role-session-name: github-actions-cs3-db-init
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Get RDS endpoint
+      - name: Get database endpoint (PostgreSQL on EC2)
         working-directory: cs3/terraform
         run: |
           terraform init -backend-config="bucket=${{ secrets.TF_BACKEND_BUCKET }}" \
@@ -421,17 +389,30 @@ jobs:
                         -backend-config="region=${{ env.AWS_REGION }}" \
                         -backend-config="encrypt=true" \
                         -backend-config="dynamodb_table=terraform-locks"
-          RDS_ENDPOINT=$(terraform output -raw rds_endpoint)
-          echo "RDS_HOST=${RDS_ENDPOINT%:*}" >> $GITHUB_ENV
-          echo "RDS_PORT=${RDS_ENDPOINT##*:}" >> $GITHUB_ENV
+          # Prefer the EC2-hosted PostgreSQL endpoint if present
+          PG_ENDPOINT=$(terraform output -raw postgresql_endpoint 2>/dev/null || true)
+          if [[ -n "$PG_ENDPOINT" && "$PG_ENDPOINT" != "null" ]]; then
+            echo "Detected PostgreSQL endpoint: $PG_ENDPOINT"
+            echo "RDS_HOST=${PG_ENDPOINT%:*}" >> $GITHUB_ENV
+            echo "RDS_PORT=${PG_ENDPOINT##*:}" >> $GITHUB_ENV
+          else
+            echo "No postgresql_endpoint output found. Skipping DB host setup."
+          fi
 
-      - name: Initialize database schema
+      - name: Initialize database schema (manual by default)
         run: |
-          psql -h "${{ env.RDS_HOST }}" \
-               -p "${{ env.RDS_PORT }}" \
-               -U admin \
-               -d employees \
-               -f cs3/terraform/rds/schema.sql \
-               -v ON_ERROR_STOP=1
+          if [[ "${{ env.AUTO_DB_INIT }}" == "true" ]]; then
+            echo "Running DB initialization against ${RDS_HOST}:${RDS_PORT}"
+            psql -h "${{ env.RDS_HOST }}" \
+                 -p "${{ env.RDS_PORT }}" \
+                 -U admin \
+                 -d employees \
+                 -f cs3/terraform/rds/schema.sql \
+                 -v ON_ERROR_STOP=1
+          else
+            echo "AUTO_DB_INIT is not true; skipping automatic DB initialization."
+            echo "To initialize the DB manually, SSH/SSM to the EC2 instance and run:"
+            echo "  psql -h <db_host> -p <db_port> -U admin -d employees -f cs3/terraform/rds/schema.sql"
+          fi
         env:
           PGPASSWORD: "${{ secrets.CS3_DB_PASSWORD }}"
