@@ -127,8 +127,11 @@ jobs:
           EKS_CLUSTER_SG_NAME="${CLUSTER_NAME}${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}-cluster-sg"
           RDS_SG_NAME="${NAME_PREFIX}-employee-db${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}-sg"
           RDS_SUBNET_GROUP_NAME="${NAME_PREFIX}-employee-db${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}-subnet-group"
+          COGNITO_USER_POOL_NAME="${NAME_PREFIX}-employees${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          COGNITO_USER_POOL_CLIENT_NAME="${COGNITO_USER_POOL_NAME}-client"
+          COGNITO_IDENTITY_POOL_NAME="${NAME_PREFIX}-identity-pool${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           WAF_NAME="${NAME_PREFIX}-portal-waf${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
-          COGNITO_ROLE_NAME="${NAME_PREFIX}-employees${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}-authenticated-role"
+          COGNITO_ROLE_NAME="${COGNITO_USER_POOL_NAME}-authenticated-role"
           EKS_CLUSTER_ROLE_NAME="${CLUSTER_NAME}${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}-cluster-role"
           EKS_NODE_ROLE_NAME="${CLUSTER_NAME}${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}-node-role"
 
@@ -383,12 +386,36 @@ jobs:
             fi
           else
             echo "Skipping EKS IAM role imports because TF_VAR_skip_eks_import=true"
-            if aws iam get-role --role-name "$COGNITO_ROLE_NAME" >/dev/null 2>&1; then
-              ARN=$(aws iam get-role --role-name "$COGNITO_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
-              if [[ -n "$ARN" ]]; then
-                echo "Importing IAM role (cognito authenticated): $ARN"
-                terraform import -input=false -lock=false module.cognito.aws_iam_role.cognito_authenticated "$ARN" || echo "Import IAM cognito role failed"
-              fi
+          fi
+
+          if aws iam get-role --role-name "$COGNITO_ROLE_NAME" >/dev/null 2>&1; then
+            echo "Importing IAM role (cognito authenticated): $COGNITO_ROLE_NAME"
+            terraform import -input=false -lock=false module.cognito.aws_iam_role.cognito_authenticated "$COGNITO_ROLE_NAME" || echo "Import IAM cognito role failed"
+            terraform import -input=false -lock=false module.cognito.aws_iam_role_policy.cognito_authenticated_policy "$COGNITO_ROLE_NAME:${COGNITO_ROLE_NAME}-policy" || echo "Import IAM cognito role policy failed"
+          fi
+
+          # Cognito user pool / client / identity pool / resource server
+          COGNITO_USER_POOL_ID=$(aws cognito-idp list-user-pools --max-results 60 --region "$AWS_REGION" --query "UserPools[?Name=='$COGNITO_USER_POOL_NAME'].Id | [0]" --output text 2>/dev/null || true)
+          if [[ -n "$COGNITO_USER_POOL_ID" && "$COGNITO_USER_POOL_ID" != "None" ]]; then
+            echo "Importing Cognito user pool: $COGNITO_USER_POOL_ID"
+            terraform import -input=false -lock=false module.cognito.aws_cognito_user_pool.this "$COGNITO_USER_POOL_ID" || echo "Import Cognito user pool failed"
+
+            COGNITO_CLIENT_ID=$(aws cognito-idp list-user-pool-clients --user-pool-id "$COGNITO_USER_POOL_ID" --region "$AWS_REGION" --query "UserPoolClients[?ClientName=='$COGNITO_USER_POOL_CLIENT_NAME'].ClientId | [0]" --output text 2>/dev/null || true)
+            if [[ -n "$COGNITO_CLIENT_ID" && "$COGNITO_CLIENT_ID" != "None" ]]; then
+              echo "Importing Cognito user pool client: $COGNITO_USER_POOL_ID/$COGNITO_CLIENT_ID"
+              terraform import -input=false -lock=false module.cognito.aws_cognito_user_pool_client.this "$COGNITO_USER_POOL_ID/$COGNITO_CLIENT_ID" || echo "Import Cognito user pool client failed"
+            fi
+
+            COGNITO_IDENTITY_POOL_ID=$(aws cognito-identity list-identity-pools --max-results 60 --region "$AWS_REGION" --query "IdentityPools[?IdentityPoolName=='$COGNITO_IDENTITY_POOL_NAME'].IdentityPoolId | [0]" --output text 2>/dev/null || true)
+            if [[ -n "$COGNITO_IDENTITY_POOL_ID" && "$COGNITO_IDENTITY_POOL_ID" != "None" ]]; then
+              echo "Importing Cognito identity pool: $COGNITO_IDENTITY_POOL_ID"
+              terraform import -input=false -lock=false aws_cognito_identity_pool.this "$COGNITO_IDENTITY_POOL_ID" || echo "Import Cognito identity pool failed"
+            fi
+
+            COGNITO_RESOURCE_SERVER_PRESENT=$(aws cognito-idp list-resource-servers --user-pool-id "$COGNITO_USER_POOL_ID" --region "$AWS_REGION" --query "ResourceServers[?Identifier=='cs3-api'].Identifier | [0]" --output text 2>/dev/null || true)
+            if [[ -n "$COGNITO_RESOURCE_SERVER_PRESENT" && "$COGNITO_RESOURCE_SERVER_PRESENT" != "None" ]]; then
+              echo "Importing Cognito resource server: $COGNITO_USER_POOL_ID/cs3-api"
+              terraform import -input=false -lock=false module.cognito.aws_cognito_resource_server.this "$COGNITO_USER_POOL_ID/cs3-api" || echo "Import Cognito resource server failed"
             fi
           fi
 
@@ -420,7 +447,7 @@ jobs:
       - name: Terraform plan
         env:
           TF_LOG: DEBUG
-          TF_VAR_resource_suffix: "v6"
+          TF_VAR_resource_suffix: ""
           TF_VAR_db_password: "${{ secrets.CS3_DB_PASSWORD }}"
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
@@ -429,7 +456,7 @@ jobs:
 
       - name: Terraform apply
         env:
-          TF_VAR_resource_suffix: "v6"
+          TF_VAR_resource_suffix: ""
           TF_VAR_db_password: "${{ secrets.CS3_DB_PASSWORD }}"
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
