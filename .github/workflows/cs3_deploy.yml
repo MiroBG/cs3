@@ -166,7 +166,7 @@ jobs:
 
             COGNITO_RESOURCE_SERVER_PRESENT=$(aws cognito-idp list-resource-servers --user-pool-id "$POOL_ID" --region "$AWS_REGION" --query "ResourceServers[?Identifier=='cs3-api'].Identifier | [0]" --output text 2>/dev/null || true)
             if [[ -n "$COGNITO_RESOURCE_SERVER_PRESENT" && "$COGNITO_RESOURCE_SERVER_PRESENT" != "None" ]]; then
-              terraform import -input=false -lock=false module.cognito.aws_cognito_resource_server.this "$POOL_ID|cs3-api" || echo "Import Cognito resource server failed"
+              terraform import -input=false -lock=false module.cognito.aws_cognito_resource_server.this[0] "$POOL_ID|cs3-api" || echo "Import Cognito resource server failed"
             fi
           fi
 
@@ -192,7 +192,6 @@ jobs:
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
           TF_VAR_manage_cognito_domain: "false"
-          TF_VAR_manage_cognito_resource_server: "${{ env.TF_VAR_manage_cognito_resource_server || 'true' }}"
         run: terraform plan -input=false -out=tfplan
 
       - name: Upload plan
@@ -337,7 +336,7 @@ jobs:
               echo "Detected existing Cognito resource server cs3-api; disabling Terraform create for this run"
               echo "TF_VAR_manage_cognito_resource_server=false" >> "$GITHUB_ENV"
               # aws_cognito_resource_server import ID uses user_pool_id|identifier
-              tf_import_if_needed "module.cognito.aws_cognito_resource_server.this" "$COGNITO_USER_POOL_ID|cs3-api"
+              tf_import_if_needed "module.cognito.aws_cognito_resource_server.this[0]" "$COGNITO_USER_POOL_ID|cs3-api"
             fi
           fi
 
@@ -391,7 +390,6 @@ jobs:
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
           TF_VAR_manage_cognito_domain: "false"
-          TF_VAR_manage_cognito_resource_server: "${{ env.TF_VAR_manage_cognito_resource_server || 'true' }}"
         run: terraform plan -input=false -out=tfplan
 
       - name: Terraform apply
@@ -401,7 +399,6 @@ jobs:
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
           TF_VAR_manage_cognito_domain: "false"
-          TF_VAR_manage_cognito_resource_server: "${{ env.TF_VAR_manage_cognito_resource_server || 'true' }}"
         run: terraform apply -auto-approve tfplan
 
       - name: Output Terraform values
