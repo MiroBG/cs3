@@ -50,89 +50,27 @@ variable "resource_suffix" {
   description = "Suffix appended to resource names to avoid collisions"
 }
 
-variable "kubernetes_host" {
-  type        = string
-  default     = ""
-  description = "EKS API server endpoint for Kubernetes and Helm provider setup"
-}
-
-variable "kubernetes_cluster_ca_certificate" {
-  type        = string
-  default     = ""
-  sensitive   = true
-  description = "Base64-encoded EKS cluster CA certificate for Kubernetes and Helm provider setup"
-}
-
 variable "cluster_name" {
   type    = string
-  default = "cs3-eks-cluster"
+  default = "cs3-k3s-cluster"
 }
 
-variable "kubernetes_version" {
-  type    = string
-  default = "1.30"
+variable "ec2_instance_type" {
+  type        = string
+  default     = "t3.micro"
+  description = "EC2 instance type for k3s deployment"
 }
 
-variable "cluster_endpoint_public_access" {
-  type    = bool
-  default = true
-}
-
-variable "cluster_endpoint_private_access" {
-  type    = bool
-  default = false
-}
-
-variable "capacity_type" {
-  type    = string
-  default = "ON_DEMAND"
-}
-
-variable "node_instance_types" {
-  type    = list(string)
-  default = ["t3.small"]
-}
-
-variable "desired_size" {
-  type    = number
-  default = 1
-}
-
-variable "min_size" {
-  type    = number
-  default = 1
-}
-
-variable "max_size" {
-  type    = number
-  default = 2
+variable "ec2_root_volume_size" {
+  type        = number
+  default     = 30
+  description = "Root volume size in GB"
 }
 
 variable "db_password" {
   type        = string
   sensitive   = true
-  description = "RDS master password for employee database"
-}
-
-variable "db_username" {
-  type        = string
-  default     = "admin"
-  description = "RDS master username"
-}
-
-variable "db_instance_class" {
-  type    = string
-  default = "db.t3.micro"
-}
-
-variable "db_allocated_storage" {
-  type    = number
-  default = 20
-}
-
-variable "db_multi_az" {
-  type    = bool
-  default = false
+  description = "PostgreSQL password (running on EC2 instance)"
 }
 
 variable "cognito_domain" {

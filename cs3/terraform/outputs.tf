@@ -10,26 +10,34 @@ output "private_subnet_ids" {
   value = module.vpc.private_subnet_ids
 }
 
-output "eks_cluster_name" {
-  value = module.eks.cluster_name
+output "ec2_instance_id" {
+  value       = module.ec2_k3s.instance_id
+  description = "EC2 instance ID running k3s"
 }
 
-output "eks_cluster_endpoint" {
-  value = module.eks.cluster_endpoint
+output "ec2_instance_public_ip" {
+  value       = module.ec2_k3s.instance_public_ip
+  description = "Public Elastic IP for EC2 instance"
 }
 
-output "rds_endpoint" {
-  value       = module.rds.rds_endpoint
-  description = "RDS database endpoint (hostname:port)"
+output "ec2_instance_private_ip" {
+  value       = module.ec2_k3s.instance_private_ip
+  description = "Private IP of EC2 instance"
 }
 
-output "rds_database_name" {
-  value       = module.rds.rds_database_name
-  description = "RDS database name for employee records"
+output "kubernetes_endpoint" {
+  value       = module.ec2_k3s.kubernetes_endpoint
+  description = "k3s API endpoint"
 }
 
-output "rds_security_group_id" {
-  value = module.rds.rds_security_group_id
+output "grafana_endpoint" {
+  value       = module.ec2_k3s.grafana_endpoint
+  description = "Grafana monitoring dashboard URL"
+}
+
+output "postgresql_endpoint" {
+  value       = module.ec2_k3s.postgresql_endpoint
+  description = "PostgreSQL database endpoint (on EC2)"
 }
 
 output "cognito_user_pool_id" {
@@ -79,11 +87,6 @@ output "cloudwatch_log_group" {
 output "loki_endpoint" {
   value       = try(module.logging[0].loki_endpoint, null)
   description = "Loki log aggregation endpoint"
-}
-
-output "grafana_endpoint" {
-  value       = try(module.logging[0].grafana_endpoint, null)
-  description = "Grafana visualization endpoint"
 }
 
 output "grafana_admin_user" {

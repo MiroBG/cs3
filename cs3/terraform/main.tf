@@ -6,14 +6,6 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
-    kubernetes = {
-      source  = "hashicorp/kubernetes"
-      version = "~> 2.28"
-    }
-    helm = {
-      source  = "hashicorp/helm"
-      version = "~> 2.12"
-    }
     random = {
       source  = "hashicorp/random"
       version = "~> 3.0"
@@ -23,31 +15,10 @@ terraform {
 
 locals {
   resource_suffix_part = var.resource_suffix != "" ? "-${var.resource_suffix}" : ""
-  eks_cluster_name     = "${var.cluster_name}${local.resource_suffix_part}"
-  kubernetes_ready     = var.kubernetes_host != "" && var.kubernetes_cluster_ca_certificate != ""
 }
 
 provider "aws" {
   region = var.region
-}
-
-provider "kubernetes" {
-  host                   = local.kubernetes_ready ? var.kubernetes_host : "https://127.0.0.1"
-  cluster_ca_certificate = local.kubernetes_ready ? base64decode(var.kubernetes_cluster_ca_certificate) : ""
-  token                  = local.kubernetes_ready ? data.aws_eks_cluster_auth.this[0].token : ""
-}
-
-data "aws_eks_cluster_auth" "this" {
-  count = local.kubernetes_ready ? 1 : 0
-  name  = local.eks_cluster_name
-}
-
-provider "helm" {
-  kubernetes {
-    host                   = local.kubernetes_ready ? var.kubernetes_host : "https://127.0.0.1"
-    cluster_ca_certificate = local.kubernetes_ready ? base64decode(var.kubernetes_cluster_ca_certificate) : ""
-    token                  = local.kubernetes_ready ? data.aws_eks_cluster_auth.this[0].token : ""
-  }
 }
 
 module "vpc" {
@@ -64,40 +35,19 @@ module "vpc" {
   tags                  = var.tags
 }
 
-module "eks" {
-  source = "./eks"
+module "ec2_k3s" {
+  source = "./ec2_k3s"
 
-  cluster_name                    = var.cluster_name
-  vpc_id                          = module.vpc.vpc_id
-  vpc_cidr                        = var.vpc_cidr
-  subnet_ids                      = var.use_default_vpc ? module.vpc.public_subnet_ids : module.vpc.private_subnet_ids
-  kubernetes_version              = var.kubernetes_version
-  cluster_endpoint_public_access  = var.cluster_endpoint_public_access
-  cluster_endpoint_private_access = var.cluster_endpoint_private_access
-  capacity_type                   = var.capacity_type
-  node_instance_types             = var.node_instance_types
-  desired_size                    = var.desired_size
-  min_size                        = var.min_size
-  max_size                        = var.max_size
-  resource_suffix                 = var.resource_suffix
-  tags                            = var.tags
-}
-
-module "rds" {
-  source = "./rds"
-
-  vpc_id               = module.vpc.vpc_id
-  vpc_cidr             = var.vpc_cidr
-  database_subnet_ids  = module.vpc.database_subnet_ids
-  db_name              = "${var.name_prefix}-employee-db${local.resource_suffix_part}"
-  resource_suffix      = var.resource_suffix
-  db_database_name     = "employees"
-  db_username          = var.db_username
-  db_password          = var.db_password
-  db_instance_class    = var.db_instance_class
-  db_allocated_storage = var.db_allocated_storage
-  db_multi_az          = var.db_multi_az
-  tags                 = var.tags
+  name_prefix             = var.name_prefix
+  resource_suffix_part    = local.resource_suffix_part
+  instance_type           = var.ec2_instance_type
+  root_volume_size        = var.ec2_root_volume_size
+  vpc_id                  = module.vpc.vpc_id
+  subnet_id               = module.vpc.public_subnet_ids[0]
+  vpc_cidr                = var.vpc_cidr
+  db_password             = var.db_password
+  grafana_admin_password  = var.grafana_admin_password
+  tags                    = var.tags
 }
 
 # Cognito Identity Pool for federated access
@@ -136,7 +86,7 @@ module "ecr" {
 }
 
 module "logging" {
-  count  = local.kubernetes_ready ? 1 : 0
+  count  = 1  # Always deploy logging since we have k3s
   source = "./logging"
 
   logging_namespace      = var.logging_namespace
@@ -144,7 +94,7 @@ module "logging" {
   resource_suffix        = var.resource_suffix
   tags                   = var.tags
 
-  depends_on = [module.eks]
+  depends_on = [module.ec2_k3s]
 }
 
 module "waf" {

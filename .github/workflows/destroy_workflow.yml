@@ -211,52 +211,218 @@ jobs:
           role-session-name: github-actions-cleanup
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Clean up orphaned resources
+      - name: Clean up orphaned resources (comprehensive)
         run: |
           set +e  # Don't fail on individual cleanup steps
           
           echo "=========================================="
-          echo "CLEANUP PHASE: Removing orphaned resources"
+          echo "COMPREHENSIVE CLEANUP PHASE"
           echo "=========================================="
           
-          # Cleanup patterns for CS1, CS2, CS3, and bootstrap
+          REGION="${{ env.AWS_REGION }}"
           PATTERNS=("cs1" "cs2" "cs3" "bootstrap")
           
           echo ""
-          echo "=== Cleaning up Lambda Functions ==="
-          for func in $(aws lambda list-functions --region ${{ env.AWS_REGION }} --query 'Functions[].FunctionName' --output text 2>/dev/null); do
+          echo "=== Step 1: Detach and Delete Internet Gateways ==="
+          for igw_id in $(aws ec2 describe-internet-gateways --region "$REGION" --query 'InternetGateways[].InternetGatewayId' --output text 2>/dev/null); do
+            for pattern in "${PATTERNS[@]}"; do
+              igw_name=$(aws ec2 describe-internet-gateways --internet-gateway-ids "$igw_id" --region "$REGION" --query 'InternetGateways[0].Tags[?Key==`Name`].Value' --output text 2>/dev/null || true)
+              if [[ "$igw_name" =~ $pattern ]] || [[ -z "$igw_name" ]]; then
+                # Detach from VPC
+                for vpc_id in $(aws ec2 describe-internet-gateways --internet-gateway-ids "$igw_id" --region "$REGION" --query 'InternetGateways[0].Attachments[].VpcId' --output text 2>/dev/null); do
+                  echo "Detaching IGW $igw_id from VPC $vpc_id"
+                  aws ec2 detach-internet-gateway --internet-gateway-id "$igw_id" --vpc-id "$vpc_id" --region "$REGION" 2>/dev/null && echo "  ✓ Detached" || echo "  ✗ Failed"
+                done
+                # Delete IGW
+                echo "Deleting Internet Gateway: $igw_id"
+                aws ec2 delete-internet-gateway --internet-gateway-id "$igw_id" --region "$REGION" 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
+                break
+              fi
+            done
+          done
+          
+          echo ""
+          echo "=== Step 2: Release Elastic IPs ==="
+          for alloc_id in $(aws ec2 describe-addresses --region "$REGION" --query 'Addresses[].AllocationId' --output text 2>/dev/null); do
+            public_ip=$(aws ec2 describe-addresses --allocation-ids "$alloc_id" --region "$REGION" --query 'Addresses[0].PublicIp' --output text 2>/dev/null || true)
+            echo "Releasing EIP: $public_ip"
+            aws ec2 release-address --allocation-id "$alloc_id" --region "$REGION" 2>/dev/null && echo "  ✓ Released" || echo "  ✗ Failed"
+          done
+          
+          echo ""
+          echo "=== Step 3: Detach and Delete NAT Gateways ==="
+          for ngw_id in $(aws ec2 describe-nat-gateways --region "$REGION" --filter Name=state,Values=available --query 'NatGateways[].NatGatewayId' --output text 2>/dev/null); do
+            echo "Deleting NAT Gateway: $ngw_id"
+            aws ec2 delete-nat-gateway --nat-gateway-id "$ngw_id" --region "$REGION" 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
+          done
+          
+          # Wait for NAT gateways to be deleted
+          sleep 10
+          
+          echo ""
+          echo "=== Step 4: Delete Security Groups ==="
+          for sg_id in $(aws ec2 describe-security-groups --region "$REGION" --query 'SecurityGroups[].GroupId' --output text 2>/dev/null); do
+            sg_name=$(aws ec2 describe-security-groups --group-ids "$sg_id" --region "$REGION" --query 'SecurityGroups[0].GroupName' --output text 2>/dev/null || true)
+            if [[ "$sg_name" != "default" ]]; then
+              for pattern in "${PATTERNS[@]}"; do
+                if [[ "$sg_name" =~ $pattern ]]; then
+                  echo "Deleting Security Group: $sg_name ($sg_id)"
+                  aws ec2 delete-security-group --group-id "$sg_id" --region "$REGION" 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed (may still be in use)"
+                  break
+                fi
+              done
+            fi
+          done
+          
+          echo ""
+          echo "=== Step 5: Delete Subnets ==="
+          for subnet_id in $(aws ec2 describe-subnets --region "$REGION" --query 'Subnets[].SubnetId' --output text 2>/dev/null); do
+            subnet_tags=$(aws ec2 describe-subnets --subnet-ids "$subnet_id" --region "$REGION" --query 'Subnets[0].Tags' --output json 2>/dev/null || true)
+            for pattern in "${PATTERNS[@]}"; do
+              if [[ "$subnet_tags" =~ $pattern ]]; then
+                echo "Deleting Subnet: $subnet_id"
+                aws ec2 delete-subnet --subnet-id "$subnet_id" --region "$REGION" 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed (may still be in use)"
+                break
+              fi
+            done
+          done
+          
+          echo ""
+          echo "=== Step 6: Delete Route Tables ==="
+          for rtb_id in $(aws ec2 describe-route-tables --region "$REGION" --query 'RouteTables[].RouteTableId' --output text 2>/dev/null); do
+            is_main=$(aws ec2 describe-route-tables --route-table-ids "$rtb_id" --region "$REGION" --query 'RouteTables[0].Associations[0].Main' --output text 2>/dev/null || true)
+            if [[ "$is_main" != "True" ]]; then
+              rtb_tags=$(aws ec2 describe-route-tables --route-table-ids "$rtb_id" --region "$REGION" --query 'RouteTables[0].Tags' --output json 2>/dev/null || true)
+              for pattern in "${PATTERNS[@]}"; do
+                if [[ "$rtb_tags" =~ $pattern ]]; then
+                  echo "Deleting Route Table: $rtb_id"
+                  aws ec2 delete-route-table --route-table-id "$rtb_id" --region "$REGION" 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
+                  break
+                fi
+              done
+            fi
+          done
+          
+          echo ""
+          echo "=== Step 7: Delete VPCs ==="
+          for vpc_id in $(aws ec2 describe-vpcs --region "$REGION" --query 'Vpcs[].VpcId' --output text 2>/dev/null); do
+            is_default=$(aws ec2 describe-vpcs --vpc-ids "$vpc_id" --region "$REGION" --query 'Vpcs[0].IsDefault' --output text 2>/dev/null || true)
+            if [[ "$is_default" != "True" ]]; then
+              vpc_tags=$(aws ec2 describe-vpcs --vpc-ids "$vpc_id" --region "$REGION" --query 'Vpcs[0].Tags' --output json 2>/dev/null || true)
+              for pattern in "${PATTERNS[@]}"; do
+                if [[ "$vpc_tags" =~ $pattern ]]; then
+                  echo "Deleting VPC: $vpc_id"
+                  aws ec2 delete-vpc --vpc-id "$vpc_id" --region "$REGION" 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed (may have dependencies)"
+                  break
+                fi
+              done
+            fi
+          done
+          
+          # Continue with remaining resource types
+          echo ""
+          echo "=== Step 8: Cleaning up Lambda Functions ==="
+          for func in $(aws lambda list-functions --region $REGION --query 'Functions[].FunctionName' --output text 2>/dev/null); do
             for pattern in "${PATTERNS[@]}"; do
               if [[ "$func" =~ $pattern ]]; then
                 echo "Deleting Lambda function: $func"
-                aws lambda delete-function --function-name "$func" --region ${{ env.AWS_REGION }} 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
+                aws lambda delete-function --function-name "$func" --region $REGION 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
                 break
               fi
             done
           done
           
           echo ""
-          echo "=== Cleaning up SNS Topics ==="
-          for topic_arn in $(aws sns list-topics --region ${{ env.AWS_REGION }} --query 'Topics[].TopicArn' --output text 2>/dev/null); do
+          echo "=== Step 9: Cleaning up SNS Topics ==="
+          for topic_arn in $(aws sns list-topics --region $REGION --query 'Topics[].TopicArn' --output text 2>/dev/null); do
             for pattern in "${PATTERNS[@]}"; do
               if [[ "$topic_arn" =~ $pattern ]]; then
                 echo "Deleting SNS topic: $topic_arn"
-                aws sns delete-topic --topic-arn "$topic_arn" --region ${{ env.AWS_REGION }} 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
+                aws sns delete-topic --topic-arn "$topic_arn" --region $REGION 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
                 break
               fi
             done
           done
           
           echo ""
-          echo "=== Cleaning up DynamoDB Tables ==="
-          for table in $(aws dynamodb list-tables --region ${{ env.AWS_REGION }} --query 'TableNames[]' --output text 2>/dev/null); do
+          echo "=== Step 10: Cleaning up DynamoDB Tables ==="
+          for table in $(aws dynamodb list-tables --region $REGION --query 'TableNames[]' --output text 2>/dev/null); do
             for pattern in "${PATTERNS[@]}"; do
               if [[ "$table" =~ $pattern ]] || [[ "$table" == "terraform-locks" ]]; then
                 echo "Deleting DynamoDB table: $table"
-                aws dynamodb delete-table --table-name "$table" --region ${{ env.AWS_REGION }} 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
+                aws dynamodb delete-table --table-name "$table" --region $REGION 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
                 break
               fi
             done
           done
+          
+          echo ""
+          echo "=== Step 11: Cleaning up Cognito Resources ==="
+          # User pools
+          for pool_id in $(aws cognito-idp list-user-pools --max-results 60 --region $REGION --query 'UserPools[].Id' --output text 2>/dev/null); do
+            pool_name=$(aws cognito-idp describe-user-pool --user-pool-id "$pool_id" --region $REGION --query 'UserPool.Name' --output text 2>/dev/null || true)
+            for pattern in "${PATTERNS[@]}"; do
+              if [[ "$pool_name" =~ $pattern ]]; then
+                echo "Deleting Cognito User Pool: $pool_name ($pool_id)"
+                aws cognito-idp delete-user-pool --user-pool-id "$pool_id" --region $REGION 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
+                break
+              fi
+            done
+          done
+          
+          # Identity pools
+          for pool_id in $(aws cognito-identity list-identity-pools --max-results 60 --region $REGION --query 'IdentityPools[].IdentityPoolId' --output text 2>/dev/null); do
+            pool_name=$(aws cognito-identity describe-identity-pool --identity-pool-id "$pool_id" --region $REGION --query 'IdentityPoolName' --output text 2>/dev/null || true)
+            for pattern in "${PATTERNS[@]}"; do
+              if [[ "$pool_name" =~ $pattern ]]; then
+                echo "Deleting Cognito Identity Pool: $pool_name ($pool_id)"
+                aws cognito-identity delete-identity-pool --identity-pool-id "$pool_id" --region $REGION 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
+                break
+              fi
+            done
+          done
+          
+          echo ""
+          echo "=== Step 12: Cleaning up ECR Repositories ==="
+          for repo in $(aws ecr describe-repositories --region $REGION --query 'repositories[].repositoryName' --output text 2>/dev/null); do
+            for pattern in "${PATTERNS[@]}"; do
+              if [[ "$repo" =~ $pattern ]]; then
+                echo "Deleting ECR repository: $repo"
+                aws ecr delete-repository --repository-name "$repo" --region $REGION --force 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
+                break
+              fi
+            done
+          done
+          
+          echo ""
+          echo "=== Step 13: Cleaning up CloudWatch Log Groups ==="
+          for log_group in $(aws logs describe-log-groups --region $REGION --query 'logGroups[].logGroupName' --output text 2>/dev/null); do
+            for pattern in "${PATTERNS[@]}"; do
+              if [[ "$log_group" =~ $pattern ]] || [[ "$log_group" =~ /aws/lambda/ ]] || [[ "$log_group" =~ /aws/eks/ ]]; then
+                echo "Deleting log group: $log_group"
+                aws logs delete-log-group --log-group-name "$log_group" --region $REGION 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
+                break
+              fi
+            done
+          done
+          
+          echo ""
+          echo "=== Step 14: Cleaning up S3 Buckets ==="
+          for bucket in $(aws s3 ls --query "Buckets[].Name" --output text 2>/dev/null); do
+            for pattern in "${PATTERNS[@]}"; do
+              if [[ "$bucket" =~ $pattern ]]; then
+                echo "Emptying and deleting S3 bucket: $bucket"
+                aws s3 rm "s3://$bucket" --recursive 2>/dev/null && echo "  ✓ Emptied" || true
+                aws s3 rb "s3://$bucket" 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
+                break
+              fi
+            done
+          done
+          
+          echo ""
+          echo "=========================================="
+          echo "✓ Comprehensive Cleanup Phase Complete"
+          echo "=========================================="
           
           echo ""
           echo "=== Cleaning up Cognito Resources ==="
