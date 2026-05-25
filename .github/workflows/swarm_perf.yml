@@ -1,0 +1,41 @@
+name: Swarm Perf (template)
+
+on:
+  workflow_dispatch:
+    inputs:
+      manager_host:
+        description: 'SSH target for swarm manager (user@host)'
+        required: true
+      ssh_key_secret:
+        description: 'Secret name containing private key (optional)'
+        required: false
+      k6_target:
+        description: 'Target URL for k6 (http://host:8080)'
+        required: true
+
+jobs:
+  deploy-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare SSH key (from secret)
+        if: ${{ github.event.inputs.ssh_key_secret != '' }}
+        run: |
+          echo "Setting up SSH key from secret"
+          mkdir -p ~/.ssh
+          echo "${{ secrets[github.event.inputs.ssh_key_secret] }}" > ~/.ssh/swarm_key
+          chmod 600 ~/.ssh/swarm_key
+
+      - name: Deploy stack to manager
+        run: |
+          ./scripts/swarm/deploy_stack.sh "${{ github.event.inputs.manager_host }}" "${HOME}/.ssh/swarm_key" cs3/docker_swarm_stack/portal-stack.yml .secrets/swarm.env
+
+      - name: Wait for service (quick)
+        run: |
+          sleep 10
+
+      - name: Run k6 tests
+        run: |
+          ./scripts/swarm/run_k6.sh cs3/load_tests/k6/portal_load_test.js "${{ github.event.inputs.k6_target }}"

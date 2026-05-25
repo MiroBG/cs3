@@ -13,7 +13,13 @@ spec:
     metadata:
       labels:
         app: cs3-portal
+        annotations:
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "5000"
+          prometheus.io/path: "/metrics"
     spec:
+        namespace: cs3-prod
+        serviceAccountName: cs3-portal
       containers:
       - name: portal
         image: PORTAL_ECR_IMAGE:latest
