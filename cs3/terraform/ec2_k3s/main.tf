@@ -10,79 +10,65 @@ resource "aws_security_group" "k3s" {
   description = "Security group for k3s instance"
   vpc_id      = var.vpc_id
 
+  # Keep rules inline so imported SG with identical rules stays idempotent.
+  ingress {
+    description = "SSH"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTP"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTPS"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "k3s API"
+    from_port   = 6443
+    to_port     = 6443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "Container ports"
+    from_port   = 8000
+    to_port     = 9999
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "PostgreSQL in VPC"
+    from_port   = 5432
+    to_port     = 5432
+    protocol    = "tcp"
+    cidr_blocks = [var.vpc_cidr]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
   tags = merge(local.common_tags, {
     Name = "${var.name_prefix}-k3s-sg${var.resource_suffix_part}"
   })
-}
-
-# Allow SSH access (restrict to your IP if needed)
-resource "aws_security_group_rule" "k3s_ssh" {
-  type              = "ingress"
-  from_port         = 22
-  to_port           = 22
-  protocol          = "tcp"
-  cidr_blocks       = ["0.0.0.0/0"] # Restrict to your IP in production
-  security_group_id = aws_security_group.k3s.id
-}
-
-# Allow HTTP for portal and monitoring
-resource "aws_security_group_rule" "k3s_http" {
-  type              = "ingress"
-  from_port         = 80
-  to_port           = 80
-  protocol          = "tcp"
-  cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.k3s.id
-}
-
-# Allow HTTPS for portal and monitoring
-resource "aws_security_group_rule" "k3s_https" {
-  type              = "ingress"
-  from_port         = 443
-  to_port           = 443
-  protocol          = "tcp"
-  cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.k3s.id
-}
-
-# Allow k3s API server traffic
-resource "aws_security_group_rule" "k3s_api" {
-  type              = "ingress"
-  from_port         = 6443
-  to_port           = 6443
-  protocol          = "tcp"
-  cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.k3s.id
-}
-
-# Allow container port range
-resource "aws_security_group_rule" "k3s_containers" {
-  type              = "ingress"
-  from_port         = 8000
-  to_port           = 9999
-  protocol          = "tcp"
-  cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.k3s.id
-}
-
-# Allow PostgreSQL access from within VPC
-resource "aws_security_group_rule" "k3s_postgres" {
-  type              = "ingress"
-  from_port         = 5432
-  to_port           = 5432
-  protocol          = "tcp"
-  cidr_blocks       = [var.vpc_cidr]
-  security_group_id = aws_security_group.k3s.id
-}
-
-# Allow all outbound traffic
-resource "aws_security_group_rule" "k3s_egress" {
-  type              = "egress"
-  from_port         = 0
-  to_port           = 0
-  protocol          = "-1"
-  cidr_blocks       = ["0.0.0.0/0"]
-  security_group_id = aws_security_group.k3s.id
 }
 
 # Get latest Ubuntu 24.04 LTS AMI

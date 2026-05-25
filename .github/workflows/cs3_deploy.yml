@@ -111,9 +111,11 @@ jobs:
 
           ECR_REPO_NAME="${NAME_PREFIX}-portal${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           COGNITO_USER_POOL_NAME="${NAME_PREFIX}-employees${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          COGNITO_USER_POOL_CLIENT_NAME="${COGNITO_USER_POOL_NAME}-client"
           COGNITO_IDENTITY_POOL_NAME="${NAME_PREFIX}-identity-pool${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           WAF_NAME="${NAME_PREFIX}-portal-waf${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           COGNITO_ROLE_NAME="${COGNITO_USER_POOL_NAME}-authenticated-role"
+          COGNITO_ROLE_POLICY_NAME="${COGNITO_USER_POOL_NAME}-authenticated-policy"
 
           export TF_IN_AUTOMATION=true
           set +e
@@ -145,6 +147,19 @@ jobs:
             if [[ -n "$COGNITO_ROLE_NAME" ]]; then
               echo "Importing IAM role (cognito authenticated): $COGNITO_ROLE_NAME"
               terraform import -input=false -lock=false module.cognito.aws_iam_role.cognito_authenticated "$COGNITO_ROLE_NAME" || echo "Import IAM cognito role failed"
+              terraform import -input=false -lock=false module.cognito.aws_iam_role_policy.cognito_authenticated_policy "$COGNITO_ROLE_NAME:$COGNITO_ROLE_POLICY_NAME" || echo "Import IAM cognito role policy failed"
+            fi
+          fi
+
+          if [[ -n "$POOL_ID" && "$POOL_ID" != "None" ]]; then
+            COGNITO_CLIENT_ID=$(aws cognito-idp list-user-pool-clients --user-pool-id "$POOL_ID" --region "$AWS_REGION" --query "UserPoolClients[?ClientName=='$COGNITO_USER_POOL_CLIENT_NAME'].ClientId | [0]" --output text 2>/dev/null || true)
+            if [[ -n "$COGNITO_CLIENT_ID" && "$COGNITO_CLIENT_ID" != "None" ]]; then
+              terraform import -input=false -lock=false module.cognito.aws_cognito_user_pool_client.this "$POOL_ID/$COGNITO_CLIENT_ID" || echo "Import Cognito client failed"
+            fi
+
+            COGNITO_RESOURCE_SERVER_PRESENT=$(aws cognito-idp list-resource-servers --user-pool-id "$POOL_ID" --region "$AWS_REGION" --query "ResourceServers[?Identifier=='cs3-api'].Identifier | [0]" --output text 2>/dev/null || true)
+            if [[ -n "$COGNITO_RESOURCE_SERVER_PRESENT" && "$COGNITO_RESOURCE_SERVER_PRESENT" != "None" ]]; then
+              terraform import -input=false -lock=false module.cognito.aws_cognito_resource_server.this "$POOL_ID|cs3-api" || echo "Import Cognito resource server failed"
             fi
           fi
 
@@ -261,6 +276,8 @@ jobs:
           K3S_SG_NAME="${NAME_PREFIX}-k3s-sg${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           K3S_ROLE_NAME="${NAME_PREFIX}-k3s-role${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           K3S_PROFILE_NAME="${NAME_PREFIX}-k3s-profile${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          K3S_INSTANCE_NAME="${NAME_PREFIX}-k3s${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          K3S_EIP_NAME="${NAME_PREFIX}-k3s-eip${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           CLUSTER_NAME="${TF_VAR_cluster_name:-cs3-k3s-cluster}"
           PORTAL_LOG_GROUP_NAME="/aws/eks/${CLUSTER_NAME}${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}/portal"
 
@@ -308,7 +325,8 @@ jobs:
 
             COGNITO_RESOURCE_SERVER_PRESENT=$(aws cognito-idp list-resource-servers --user-pool-id "$COGNITO_USER_POOL_ID" --region "$AWS_REGION" --query "ResourceServers[?Identifier=='cs3-api'].Identifier | [0]" --output text 2>/dev/null || true)
             if [[ -n "$COGNITO_RESOURCE_SERVER_PRESENT" && "$COGNITO_RESOURCE_SERVER_PRESENT" != "None" ]]; then
-              tf_import_if_needed "module.cognito.aws_cognito_resource_server.this" "$COGNITO_USER_POOL_ID/cs3-api"
+              # aws_cognito_resource_server import ID uses user_pool_id|identifier
+              tf_import_if_needed "module.cognito.aws_cognito_resource_server.this" "$COGNITO_USER_POOL_ID|cs3-api"
             fi
           fi
 
@@ -333,9 +351,16 @@ jobs:
             tf_import_if_needed "module.ec2_k3s.aws_iam_instance_profile.k3s" "$K3S_PROFILE_NAME"
           fi
 
+          K3S_INSTANCE_ID=$(aws ec2 describe-instances --region "$AWS_REGION" --filters "Name=tag:Name,Values=$K3S_INSTANCE_NAME" "Name=instance-state-name,Values=pending,running,stopping,stopped" --query "Reservations[].Instances[].InstanceId | [0]" --output text 2>/dev/null || true)
+          tf_import_if_needed "module.ec2_k3s.aws_instance.k3s" "$K3S_INSTANCE_ID"
+
+          K3S_EIP_ALLOC_ID=$(aws ec2 describe-addresses --region "$AWS_REGION" --filters "Name=tag:Name,Values=$K3S_EIP_NAME" --query "Addresses[0].AllocationId" --output text 2>/dev/null || true)
+          tf_import_if_needed "module.ec2_k3s.aws_eip.k3s" "$K3S_EIP_ALLOC_ID"
+
           # WAF
-          WAF_ARN=$(aws wafv2 list-web-acls --scope REGIONAL --region "$AWS_REGION" --query "WebACLs[?Name=='$WAF_NAME'].ARN | [0]" --output text 2>/dev/null || true)
-          tf_import_if_needed "module.waf.aws_wafv2_web_acl.portal" "$WAF_ARN"
+          WAF_ID=$(aws wafv2 list-web-acls --scope REGIONAL --region "$AWS_REGION" --query "WebACLs[?Name=='$WAF_NAME'].Id | [0]" --output text 2>/dev/null || true)
+          WAF_IMPORT_ID="${WAF_ID}/${WAF_NAME}/REGIONAL"
+          tf_import_if_needed "module.waf.aws_wafv2_web_acl.portal" "$WAF_IMPORT_ID"
 
           echo "Auto-import complete."
 
