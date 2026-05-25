@@ -412,6 +412,9 @@ jobs:
           role-session-name: github-actions-cs3-db-init
           aws-region: ${{ env.AWS_REGION }}
 
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
       - name: Get database endpoint (PostgreSQL on EC2)
         working-directory: cs3/terraform
         run: |
