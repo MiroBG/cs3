@@ -85,6 +85,12 @@ variable "manage_cognito_domain" {
   default     = false
 }
 
+variable "manage_cognito_resource_server" {
+  type        = bool
+  description = "If true, Terraform will create/manage Cognito resource server; set false to reuse pre-existing resource server"
+  default     = true
+}
+
 variable "cognito_callback_urls" {
   type        = list(string)
   description = "OAuth callback URLs for the Cognito app client"

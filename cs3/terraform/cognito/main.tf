@@ -123,6 +123,7 @@ resource "aws_cognito_user_pool_domain" "this" {
 }
 
 resource "aws_cognito_resource_server" "this" {
+  count        = var.manage_resource_server ? 1 : 0
   identifier   = "cs3-api"
   name         = "CS3 API"
   user_pool_id = aws_cognito_user_pool.this.id

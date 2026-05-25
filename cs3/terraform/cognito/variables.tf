@@ -61,3 +61,9 @@ variable "manage_cognito_domain" {
   description = "Whether Terraform should create/manage the Cognito user pool domain (set false to skip domain creation to avoid global-name collisions)"
   default     = false
 }
+
+variable "manage_resource_server" {
+  type        = bool
+  description = "Whether Terraform should create/manage the Cognito resource server (set false when server already exists and should be reused)"
+  default     = true
+}
