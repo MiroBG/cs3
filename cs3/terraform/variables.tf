@@ -109,6 +109,12 @@ variable "logging_namespace" {
   default     = "logging"
 }
 
+variable "enable_logging" {
+  type        = bool
+  default     = false
+  description = "Enable Terraform-managed logging stack (requires configured kubernetes/helm providers)"
+}
+
 variable "grafana_admin_password" {
   type        = string
   sensitive   = true

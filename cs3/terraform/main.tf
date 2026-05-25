@@ -86,7 +86,8 @@ module "ecr" {
 }
 
 module "logging" {
-  count  = 1 # Always deploy logging since we have k3s
+  # Logging module uses kubernetes/helm providers; keep it optional for EC2+k3s mode.
+  count  = var.enable_logging ? 1 : 0
   source = "./logging"
 
   logging_namespace      = var.logging_namespace
