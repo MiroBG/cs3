@@ -38,16 +38,16 @@ module "vpc" {
 module "ec2_k3s" {
   source = "./ec2_k3s"
 
-  name_prefix             = var.name_prefix
-  resource_suffix_part    = local.resource_suffix_part
-  instance_type           = var.ec2_instance_type
-  root_volume_size        = var.ec2_root_volume_size
-  vpc_id                  = module.vpc.vpc_id
-  subnet_id               = module.vpc.public_subnet_ids[0]
-  vpc_cidr                = var.vpc_cidr
-  db_password             = var.db_password
-  grafana_admin_password  = var.grafana_admin_password
-  tags                    = var.tags
+  name_prefix            = var.name_prefix
+  resource_suffix_part   = local.resource_suffix_part
+  instance_type          = var.ec2_instance_type
+  root_volume_size       = var.ec2_root_volume_size
+  vpc_id                 = module.vpc.vpc_id
+  subnet_id              = module.vpc.public_subnet_ids[0]
+  vpc_cidr               = var.vpc_cidr
+  db_password            = var.db_password
+  grafana_admin_password = var.grafana_admin_password
+  tags                   = var.tags
 }
 
 # Cognito Identity Pool for federated access
@@ -86,7 +86,7 @@ module "ecr" {
 }
 
 module "logging" {
-  count  = 1  # Always deploy logging since we have k3s
+  count  = 1 # Always deploy logging since we have k3s
   source = "./logging"
 
   logging_namespace      = var.logging_namespace

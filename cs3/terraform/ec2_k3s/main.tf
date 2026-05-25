@@ -21,7 +21,7 @@ resource "aws_security_group_rule" "k3s_ssh" {
   from_port         = 22
   to_port           = 22
   protocol          = "tcp"
-  cidr_blocks       = ["0.0.0.0/0"]  # Restrict to your IP in production
+  cidr_blocks       = ["0.0.0.0/0"] # Restrict to your IP in production
   security_group_id = aws_security_group.k3s.id
 }
 
@@ -88,7 +88,7 @@ resource "aws_security_group_rule" "k3s_egress" {
 # Get latest Ubuntu 24.04 LTS AMI
 data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["099720109477"]  # Canonical
+  owners      = ["099720109477"] # Canonical
 
   filter {
     name   = "name"
@@ -136,7 +136,7 @@ resource "aws_iam_instance_profile" "k3s" {
 # User data script for k3s and PostgreSQL installation
 locals {
   user_data = base64encode(templatefile("${path.module}/user-data.sh", {
-    db_password           = var.db_password
+    db_password            = var.db_password
     grafana_admin_password = var.grafana_admin_password
   }))
 }
@@ -149,7 +149,7 @@ resource "aws_instance" "k3s" {
   vpc_security_group_ids = [aws_security_group.k3s.id]
   iam_instance_profile   = aws_iam_instance_profile.k3s.name
 
-  user_data              = local.user_data
+  user_data                   = local.user_data
   user_data_replace_on_change = true
 
   root_block_device {
@@ -159,7 +159,7 @@ resource "aws_instance" "k3s" {
     encrypted             = true
   }
 
-  monitoring    = true
+  monitoring                  = true
   associate_public_ip_address = true
 
   tags = merge(local.common_tags, {
