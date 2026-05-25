@@ -1,3 +1,7 @@
+locals {
+  resource_suffix_part = var.resource_suffix != "" ? "-${var.resource_suffix}" : ""
+}
+
 resource "helm_release" "loki" {
   name       = "loki"
   repository = "https://grafana.github.io/helm-charts"
@@ -40,7 +44,7 @@ resource "helm_release" "loki" {
 
 resource "kubernetes_namespace" "logging" {
   metadata {
-    name = "${var.logging_namespace}-${var.resource_suffix}"
+    name = "${var.logging_namespace}${local.resource_suffix_part}"
   }
 }
 

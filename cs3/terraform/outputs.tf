@@ -77,22 +77,22 @@ output "cloudwatch_log_group" {
 }
 
 output "loki_endpoint" {
-  value       = module.logging.loki_endpoint
+  value       = try(module.logging[0].loki_endpoint, null)
   description = "Loki log aggregation endpoint"
 }
 
 output "grafana_endpoint" {
-  value       = module.logging.grafana_endpoint
+  value       = try(module.logging[0].grafana_endpoint, null)
   description = "Grafana visualization endpoint"
 }
 
 output "grafana_admin_user" {
-  value       = module.logging.grafana_admin_user
+  value       = try(module.logging[0].grafana_admin_user, null)
   description = "Grafana admin username"
 }
 
 output "grafana_admin_password" {
-  value       = module.logging.grafana_admin_password
+  value       = try(module.logging[0].grafana_admin_password, null)
   sensitive   = true
   description = "Grafana admin password (sensitive)"
 }

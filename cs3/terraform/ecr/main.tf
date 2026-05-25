@@ -1,5 +1,9 @@
+locals {
+  resource_suffix_part = var.resource_suffix != "" ? "-${var.resource_suffix}" : ""
+}
+
 resource "aws_ecr_repository" "portal" {
-  name                 = "${var.name_prefix}-portal-${var.resource_suffix}"
+  name                 = "${var.name_prefix}-portal${local.resource_suffix_part}"
   image_tag_mutability = "MUTABLE"
 
   image_scanning_configuration {
@@ -7,7 +11,7 @@ resource "aws_ecr_repository" "portal" {
   }
 
   tags = merge(var.tags, {
-    Name = "${var.name_prefix}-portal-${var.resource_suffix}-repo"
+    Name = "${var.name_prefix}-portal${local.resource_suffix_part}-repo"
   })
 }
 
@@ -33,11 +37,11 @@ resource "aws_ecr_lifecycle_policy" "portal" {
 }
 
 resource "aws_cloudwatch_log_group" "portal" {
-  name              = "/aws/eks/${var.cluster_name}-${var.resource_suffix}/portal"
+  name              = "/aws/eks/${var.cluster_name}${local.resource_suffix_part}/portal"
   retention_in_days = 7
 
   tags = merge(var.tags, {
-    Name = "${var.cluster_name}-${var.resource_suffix}-portal-logs"
+    Name = "${var.cluster_name}${local.resource_suffix_part}-portal-logs"
   })
 }
 

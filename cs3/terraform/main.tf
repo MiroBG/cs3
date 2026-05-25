@@ -22,7 +22,9 @@ terraform {
 }
 
 locals {
-  eks_cluster_name = "${var.cluster_name}-${var.resource_suffix}"
+  resource_suffix_part = var.resource_suffix != "" ? "-${var.resource_suffix}" : ""
+  eks_cluster_name     = "${var.cluster_name}${local.resource_suffix_part}"
+  kubernetes_ready     = var.kubernetes_host != "" && var.kubernetes_cluster_ca_certificate != ""
 }
 
 provider "aws" {
@@ -30,25 +32,21 @@ provider "aws" {
 }
 
 provider "kubernetes" {
-  host                   = var.kubernetes_host
-  cluster_ca_certificate = base64decode(var.kubernetes_cluster_ca_certificate)
-
-  exec {
-    api_version = "client.authentication.k8s.io/v1beta1"
-    command     = "aws"
-    args        = ["eks", "get-token", "--cluster-name", local.eks_cluster_name, "--region", var.region]
-  }
+  host                   = local.kubernetes_ready ? var.kubernetes_host : "https://127.0.0.1"
+  cluster_ca_certificate = local.kubernetes_ready ? base64decode(var.kubernetes_cluster_ca_certificate) : ""
+  token                  = local.kubernetes_ready ? data.aws_eks_cluster_auth.this[0].token : ""
 }
 
 data "aws_eks_cluster_auth" "this" {
-  name = local.eks_cluster_name
+  count = local.kubernetes_ready ? 1 : 0
+  name  = local.eks_cluster_name
 }
 
 provider "helm" {
   kubernetes {
-    host                   = var.kubernetes_host
-    cluster_ca_certificate = base64decode(var.kubernetes_cluster_ca_certificate)
-    token                  = data.aws_eks_cluster_auth.this.token
+    host                   = local.kubernetes_ready ? var.kubernetes_host : "https://127.0.0.1"
+    cluster_ca_certificate = local.kubernetes_ready ? base64decode(var.kubernetes_cluster_ca_certificate) : ""
+    token                  = local.kubernetes_ready ? data.aws_eks_cluster_auth.this[0].token : ""
   }
 }
 
@@ -91,7 +89,7 @@ module "rds" {
   vpc_id               = module.vpc.vpc_id
   vpc_cidr             = var.vpc_cidr
   database_subnet_ids  = module.vpc.database_subnet_ids
-  db_name              = "${var.name_prefix}-employee-db-${var.resource_suffix}"
+  db_name              = "${var.name_prefix}-employee-db${local.resource_suffix_part}"
   resource_suffix      = var.resource_suffix
   db_database_name     = "employees"
   db_username          = var.db_username
@@ -104,7 +102,7 @@ module "rds" {
 
 # Cognito Identity Pool for federated access
 resource "aws_cognito_identity_pool" "this" {
-  identity_pool_name               = "${var.name_prefix}-identity-pool-${var.resource_suffix}"
+  identity_pool_name               = "${var.name_prefix}-identity-pool${local.resource_suffix_part}"
   allow_unauthenticated_identities = false
 
   supported_login_providers = {
@@ -117,7 +115,7 @@ resource "aws_cognito_identity_pool" "this" {
 module "cognito" {
   source = "./cognito"
 
-  user_pool_name        = "${var.name_prefix}-employees-${var.resource_suffix}"
+  user_pool_name        = "${var.name_prefix}-employees${local.resource_suffix_part}"
   cognito_domain        = var.cognito_domain
   aws_region            = var.region
   callback_urls         = var.cognito_callback_urls
@@ -138,6 +136,7 @@ module "ecr" {
 }
 
 module "logging" {
+  count  = local.kubernetes_ready ? 1 : 0
   source = "./logging"
 
   logging_namespace      = var.logging_namespace

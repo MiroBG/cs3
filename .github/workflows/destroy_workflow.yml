@@ -57,6 +57,21 @@ jobs:
       - name: Terraform init
         run: terraform init -reconfigure -backend-config=backend.hcl
 
+      - name: Set Terraform variable overrides
+        env:
+          DB_PASSWORD: "${{ secrets.CS3_DB_PASSWORD || vars.CS3_DB_PASSWORD }}"
+          GRAFANA_PASSWORD: "${{ secrets.GRAFANA_ADMIN_PASSWORD || vars.GRAFANA_ADMIN_PASSWORD }}"
+        run: |
+          if [[ -n "$DB_PASSWORD" ]]; then
+            echo "TF_VAR_db_password=$DB_PASSWORD" >> "$GITHUB_ENV"
+          else
+            echo "Missing CS3_DB_PASSWORD"
+            exit 1
+          fi
+          if [[ -n "$GRAFANA_PASSWORD" ]]; then
+            echo "TF_VAR_grafana_admin_password=$GRAFANA_PASSWORD" >> "$GITHUB_ENV"
+          fi
+
       - name: Terraform destroy (CS3)
         run: terraform destroy -auto-approve
         continue-on-error: true
