@@ -253,81 +253,91 @@ jobs:
 
           ECR_REPO_NAME="${NAME_PREFIX}-portal${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           COGNITO_USER_POOL_NAME="${NAME_PREFIX}-employees${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          COGNITO_USER_POOL_CLIENT_NAME="${COGNITO_USER_POOL_NAME}-client"
           COGNITO_IDENTITY_POOL_NAME="${NAME_PREFIX}-identity-pool${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           COGNITO_ROLE_NAME="${COGNITO_USER_POOL_NAME}-authenticated-role"
+          COGNITO_ROLE_POLICY_NAME="${COGNITO_USER_POOL_NAME}-authenticated-policy"
+          WAF_NAME="${NAME_PREFIX}-portal-waf${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          K3S_SG_NAME="${NAME_PREFIX}-k3s-sg${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          K3S_ROLE_NAME="${NAME_PREFIX}-k3s-role${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          K3S_PROFILE_NAME="${NAME_PREFIX}-k3s-profile${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          CLUSTER_NAME="${TF_VAR_cluster_name:-cs3-k3s-cluster}"
+          PORTAL_LOG_GROUP_NAME="/aws/eks/${CLUSTER_NAME}${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}/portal"
 
           export TF_IN_AUTOMATION=true
-          set +e
-          echo "Looking up and importing resources (non-fatal if not found)"
+          echo "Looking up and importing resources (idempotent mode)"
 
-          # 1) ECR repo
+          tf_in_state() {
+            terraform state show "$1" >/dev/null 2>&1
+          }
+
+          tf_import_if_needed() {
+            local address="$1"
+            local import_id="$2"
+
+            if [[ -z "$import_id" || "$import_id" == "None" || "$import_id" == "null" ]]; then
+              return 0
+            fi
+
+            if tf_in_state "$address"; then
+              echo "State already has: $address"
+              return 0
+            fi
+
+            echo "Importing $address => $import_id"
+            terraform import -input=false -lock=false "$address" "$import_id" >/dev/null 2>&1 || echo "  (skipped: import failed)"
+          }
+
+          # ECR
           if aws ecr describe-repositories --repository-names "$ECR_REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
-            echo "Importing ECR repository: $ECR_REPO_NAME"
-            terraform import -input=false -lock=false module.ecr.aws_ecr_repository.portal "$ECR_REPO_NAME" 2>/dev/null || echo "  (skipped)"
+            tf_import_if_needed "module.ecr.aws_ecr_repository.portal" "$ECR_REPO_NAME"
           fi
 
-          # 2) Cognito resources
-          POOL_ID=$(aws cognito-idp list-user-pools --max-results 60 --region "$AWS_REGION" --query "UserPools[?Name=='$COGNITO_USER_POOL_NAME'].Id | [0]" --output text 2>/dev/null || true)
-          if [[ -n "$POOL_ID" && "$POOL_ID" != "None" ]]; then
-            echo "Importing Cognito User Pool: $POOL_ID"
-            terraform import -input=false -lock=false module.cognito.aws_cognito_user_pool.this "$POOL_ID" 2>/dev/null || echo "  (skipped)"
+          # CloudWatch log group created by module.ecr
+          if aws logs describe-log-groups --log-group-name-prefix "$PORTAL_LOG_GROUP_NAME" --region "$AWS_REGION" --query "logGroups[?logGroupName=='$PORTAL_LOG_GROUP_NAME'].logGroupName | [0]" --output text >/dev/null 2>&1; then
+            tf_import_if_needed "module.ecr.aws_cloudwatch_log_group.portal" "$PORTAL_LOG_GROUP_NAME"
           fi
 
-          IDENTITY_POOL_ID=$(aws cognito-identity list-identity-pools --max-results 60 --region "$AWS_REGION" --query "IdentityPools[?IdentityPoolName=='$COGNITO_IDENTITY_POOL_NAME'].IdentityPoolId | [0]" --output text 2>/dev/null || true)
-          if [[ -n "$IDENTITY_POOL_ID" && "$IDENTITY_POOL_ID" != "None" ]]; then
-            echo "Importing Cognito Identity Pool: $IDENTITY_POOL_ID"
-            terraform import -input=false -lock=false aws_cognito_identity_pool.this "$IDENTITY_POOL_ID" 2>/dev/null || echo "  (skipped)"
-          fi
-
-          echo "✓ Auto-import phase complete"
-
-          # RDS security group import skipped (RDS removed from CS3)
-
-          # Skipping EKS IAM role imports (EKS removed from CS3)
-
-          if aws iam get-role --role-name "$COGNITO_ROLE_NAME" >/dev/null 2>&1; then
-            echo "Importing IAM role (cognito authenticated): $COGNITO_ROLE_NAME"
-            terraform import -input=false -lock=false module.cognito.aws_iam_role.cognito_authenticated "$COGNITO_ROLE_NAME" || echo "Import IAM cognito role failed"
-            terraform import -input=false -lock=false module.cognito.aws_iam_role_policy.cognito_authenticated_policy "$COGNITO_ROLE_NAME:${COGNITO_ROLE_NAME}-policy" || echo "Import IAM cognito role policy failed"
-          fi
-
-          # Cognito user pool / client / identity pool / resource server
+          # Cognito core resources
           COGNITO_USER_POOL_ID=$(aws cognito-idp list-user-pools --max-results 60 --region "$AWS_REGION" --query "UserPools[?Name=='$COGNITO_USER_POOL_NAME'].Id | [0]" --output text 2>/dev/null || true)
+          tf_import_if_needed "module.cognito.aws_cognito_user_pool.this" "$COGNITO_USER_POOL_ID"
+
           if [[ -n "$COGNITO_USER_POOL_ID" && "$COGNITO_USER_POOL_ID" != "None" ]]; then
-            echo "Importing Cognito user pool: $COGNITO_USER_POOL_ID"
-            terraform import -input=false -lock=false module.cognito.aws_cognito_user_pool.this "$COGNITO_USER_POOL_ID" || echo "Import Cognito user pool failed"
-
             COGNITO_CLIENT_ID=$(aws cognito-idp list-user-pool-clients --user-pool-id "$COGNITO_USER_POOL_ID" --region "$AWS_REGION" --query "UserPoolClients[?ClientName=='$COGNITO_USER_POOL_CLIENT_NAME'].ClientId | [0]" --output text 2>/dev/null || true)
-            if [[ -n "$COGNITO_CLIENT_ID" && "$COGNITO_CLIENT_ID" != "None" ]]; then
-              echo "Importing Cognito user pool client: $COGNITO_USER_POOL_ID/$COGNITO_CLIENT_ID"
-              terraform import -input=false -lock=false module.cognito.aws_cognito_user_pool_client.this "$COGNITO_USER_POOL_ID/$COGNITO_CLIENT_ID" || echo "Import Cognito user pool client failed"
-            fi
-
-            COGNITO_IDENTITY_POOL_ID=$(aws cognito-identity list-identity-pools --max-results 60 --region "$AWS_REGION" --query "IdentityPools[?IdentityPoolName=='$COGNITO_IDENTITY_POOL_NAME'].IdentityPoolId | [0]" --output text 2>/dev/null || true)
-            if [[ -n "$COGNITO_IDENTITY_POOL_ID" && "$COGNITO_IDENTITY_POOL_ID" != "None" ]]; then
-              echo "Importing Cognito identity pool: $COGNITO_IDENTITY_POOL_ID"
-              terraform import -input=false -lock=false aws_cognito_identity_pool.this "$COGNITO_IDENTITY_POOL_ID" || echo "Import Cognito identity pool failed"
-            fi
+            tf_import_if_needed "module.cognito.aws_cognito_user_pool_client.this" "$COGNITO_USER_POOL_ID/$COGNITO_CLIENT_ID"
 
             COGNITO_RESOURCE_SERVER_PRESENT=$(aws cognito-idp list-resource-servers --user-pool-id "$COGNITO_USER_POOL_ID" --region "$AWS_REGION" --query "ResourceServers[?Identifier=='cs3-api'].Identifier | [0]" --output text 2>/dev/null || true)
             if [[ -n "$COGNITO_RESOURCE_SERVER_PRESENT" && "$COGNITO_RESOURCE_SERVER_PRESENT" != "None" ]]; then
-              echo "Importing Cognito resource server: $COGNITO_USER_POOL_ID/cs3-api"
-              terraform import -input=false -lock=false module.cognito.aws_cognito_resource_server.this "$COGNITO_USER_POOL_ID/cs3-api" || echo "Import Cognito resource server failed"
+              tf_import_if_needed "module.cognito.aws_cognito_resource_server.this" "$COGNITO_USER_POOL_ID/cs3-api"
             fi
           fi
 
-          # RDS is removed from CS3; skipping RDS imports
+          COGNITO_IDENTITY_POOL_ID=$(aws cognito-identity list-identity-pools --max-results 60 --region "$AWS_REGION" --query "IdentityPools[?IdentityPoolName=='$COGNITO_IDENTITY_POOL_NAME'].IdentityPoolId | [0]" --output text 2>/dev/null || true)
+          tf_import_if_needed "aws_cognito_identity_pool.this" "$COGNITO_IDENTITY_POOL_ID"
 
-          # 7) WAFv2 Web ACL (regional)
-          WAF_ARN=$(aws wafv2 list-web-acls --scope REGIONAL --region "$AWS_REGION" --query "WebACLs[?Name=='$WAF_NAME'].ARN | [0]" --output text 2>/dev/null || true)
-          if [[ -n "$WAF_ARN" && "$WAF_ARN" != "None" ]]; then
-            echo "Importing WAFv2 Web ACL: $WAF_ARN"
-            terraform import -input=false -lock=false module.waf.aws_wafv2_web_acl.portal "$WAF_ARN" || echo "Import WAF failed"
+          if aws iam get-role --role-name "$COGNITO_ROLE_NAME" >/dev/null 2>&1; then
+            tf_import_if_needed "module.cognito.aws_iam_role.cognito_authenticated" "$COGNITO_ROLE_NAME"
+            tf_import_if_needed "module.cognito.aws_iam_role_policy.cognito_authenticated_policy" "$COGNITO_ROLE_NAME:$COGNITO_ROLE_POLICY_NAME"
           fi
 
-          # summary
-          echo "Auto-import complete (some imports may have failed but we'll continue)."
-          set -e
+          # EC2 K3s resources
+          SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$K3S_SG_NAME" --region "$AWS_REGION" --query "SecurityGroups[0].GroupId" --output text 2>/dev/null || true)
+          tf_import_if_needed "module.ec2_k3s.aws_security_group.k3s" "$SG_ID"
+
+          if aws iam get-role --role-name "$K3S_ROLE_NAME" >/dev/null 2>&1; then
+            tf_import_if_needed "module.ec2_k3s.aws_iam_role.k3s" "$K3S_ROLE_NAME"
+            tf_import_if_needed "module.ec2_k3s.aws_iam_role_policy_attachment.k3s_ssm" "$K3S_ROLE_NAME/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+          fi
+
+          if aws iam get-instance-profile --instance-profile-name "$K3S_PROFILE_NAME" >/dev/null 2>&1; then
+            tf_import_if_needed "module.ec2_k3s.aws_iam_instance_profile.k3s" "$K3S_PROFILE_NAME"
+          fi
+
+          # WAF
+          WAF_ARN=$(aws wafv2 list-web-acls --scope REGIONAL --region "$AWS_REGION" --query "WebACLs[?Name=='$WAF_NAME'].ARN | [0]" --output text 2>/dev/null || true)
+          tf_import_if_needed "module.waf.aws_wafv2_web_acl.portal" "$WAF_ARN"
+
+          echo "Auto-import complete."
 
       - name: "Set Terraform variables from secrets"
         env:

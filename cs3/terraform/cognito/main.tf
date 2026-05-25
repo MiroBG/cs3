@@ -1,6 +1,12 @@
 resource "aws_cognito_user_pool" "this" {
   name = var.user_pool_name
 
+  lifecycle {
+    # Existing user pools often have immutable schema differences.
+    # Ignore schema drift so apply does not fail on imported pools.
+    ignore_changes = [schema]
+  }
+
   password_policy {
     minimum_length    = 12
     require_lowercase = true
