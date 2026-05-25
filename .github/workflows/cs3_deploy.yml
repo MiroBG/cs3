@@ -98,7 +98,6 @@ jobs:
           echo "TF_VAR_resource_suffix=" >> "$GITHUB_ENV"
           echo "TF_VAR_use_default_vpc=true" >> "$GITHUB_ENV"
           echo "TF_VAR_manage_cognito_domain=false" >> "$GITHUB_ENV"
-          echo "TF_VAR_manage_cognito_resource_server=true" >> "$GITHUB_ENV"
           echo "✓ Terraform variables set from secrets"
 
       - name: Auto-import existing AWS resources
@@ -134,11 +133,6 @@ jobs:
             echo "Importing Cognito User Pool: $POOL_ID"
             terraform import -input=false -lock=false module.cognito.aws_cognito_user_pool.this "$POOL_ID" 2>/dev/null || echo "  (skipped - may already be in state)"
 
-            COGNITO_RESOURCE_SERVER_PRESENT=$(aws cognito-idp list-resource-servers --user-pool-id "$POOL_ID" --region "$AWS_REGION" --query "ResourceServers[?Identifier=='cs3-api'].Identifier | [0]" --output text 2>/dev/null || true)
-            if [[ -n "$COGNITO_RESOURCE_SERVER_PRESENT" && "$COGNITO_RESOURCE_SERVER_PRESENT" != "None" ]]; then
-              echo "Detected existing Cognito resource server cs3-api; disabling Terraform create for this run"
-              echo "TF_VAR_manage_cognito_resource_server=false" >> "$GITHUB_ENV"
-            fi
           fi
 
           # 3) Cognito identity pool
@@ -262,7 +256,6 @@ jobs:
           echo "TF_VAR_resource_suffix=" >> "$GITHUB_ENV"
           echo "TF_VAR_use_default_vpc=true" >> "$GITHUB_ENV"
           echo "TF_VAR_manage_cognito_domain=false" >> "$GITHUB_ENV"
-          echo "TF_VAR_manage_cognito_resource_server=true" >> "$GITHUB_ENV"
           echo "✓ Terraform variables set from secrets"
 
       - name: Auto-import existing AWS resources
@@ -331,13 +324,6 @@ jobs:
             COGNITO_CLIENT_ID=$(aws cognito-idp list-user-pool-clients --user-pool-id "$COGNITO_USER_POOL_ID" --region "$AWS_REGION" --query "UserPoolClients[?ClientName=='$COGNITO_USER_POOL_CLIENT_NAME'].ClientId | [0]" --output text 2>/dev/null || true)
             tf_import_if_needed "module.cognito.aws_cognito_user_pool_client.this" "$COGNITO_USER_POOL_ID/$COGNITO_CLIENT_ID"
 
-            COGNITO_RESOURCE_SERVER_PRESENT=$(aws cognito-idp list-resource-servers --user-pool-id "$COGNITO_USER_POOL_ID" --region "$AWS_REGION" --query "ResourceServers[?Identifier=='cs3-api'].Identifier | [0]" --output text 2>/dev/null || true)
-            if [[ -n "$COGNITO_RESOURCE_SERVER_PRESENT" && "$COGNITO_RESOURCE_SERVER_PRESENT" != "None" ]]; then
-              echo "Detected existing Cognito resource server cs3-api; disabling Terraform create for this run"
-              echo "TF_VAR_manage_cognito_resource_server=false" >> "$GITHUB_ENV"
-              # aws_cognito_resource_server import ID uses user_pool_id|identifier
-              tf_import_if_needed "module.cognito.aws_cognito_resource_server.this[0]" "$COGNITO_USER_POOL_ID|cs3-api"
-            fi
           fi
 
           COGNITO_IDENTITY_POOL_ID=$(aws cognito-identity list-identity-pools --max-results 60 --region "$AWS_REGION" --query "IdentityPools[?IdentityPoolName=='$COGNITO_IDENTITY_POOL_NAME'].IdentityPoolId | [0]" --output text 2>/dev/null || true)
