@@ -101,9 +101,10 @@ jobs:
           if [[ -n "$EKS_ENDPOINT" && "$EKS_ENDPOINT" != "None" && -n "$EKS_CA" && "$EKS_CA" != "None" ]]; then
             echo "TF_VAR_kubernetes_host=$EKS_ENDPOINT" >> "$GITHUB_ENV"
             echo "TF_VAR_kubernetes_cluster_ca_certificate=$EKS_CA" >> "$GITHUB_ENV"
+            echo "TF_VAR_skip_eks_import=false" >> "$GITHUB_ENV"
           else
-            echo "ERROR: Could not resolve EKS connection details for $EKS_CLUSTER_NAME. The cluster must already exist before auto-import runs."
-            exit 1
+            echo "WARNING: Could not resolve EKS connection details for $EKS_CLUSTER_NAME. Skipping EKS-related imports."
+            echo "TF_VAR_skip_eks_import=true" >> "$GITHUB_ENV"
           fi
           echo "TF_VAR_resource_suffix=" >> "$GITHUB_ENV"
           echo "TF_VAR_use_default_vpc=true" >> "$GITHUB_ENV"
@@ -131,14 +132,18 @@ jobs:
           EKS_CLUSTER_ROLE_NAME="${CLUSTER_NAME}${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}-cluster-role"
           EKS_NODE_ROLE_NAME="${CLUSTER_NAME}${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}-node-role"
 
-          if aws eks describe-cluster --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
-            echo "Importing EKS cluster: $EKS_CLUSTER_NAME"
-            terraform import -input=false -lock=false module.eks.aws_eks_cluster.this "$EKS_CLUSTER_NAME" || echo "Import EKS cluster failed (continuing)"
-          fi
+          if [[ "${TF_VAR_skip_eks_import:-false}" != "true" ]]; then
+            if aws eks describe-cluster --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+              echo "Importing EKS cluster: $EKS_CLUSTER_NAME"
+              terraform import -input=false -lock=false module.eks.aws_eks_cluster.this "$EKS_CLUSTER_NAME" || echo "Import EKS cluster failed (continuing)"
+            fi
 
-          if aws eks describe-nodegroup --cluster-name "$EKS_CLUSTER_NAME" --nodegroup-name "${EKS_CLUSTER_NAME}-workers" --region "$AWS_REGION" >/dev/null 2>&1; then
-            echo "Importing EKS node group: ${EKS_CLUSTER_NAME}:workers"
-            terraform import -input=false -lock=false module.eks.aws_eks_node_group.this "${EKS_CLUSTER_NAME}:${EKS_CLUSTER_NAME}-workers" || echo "Import EKS node group failed (continuing)"
+            if aws eks describe-nodegroup --cluster-name "$EKS_CLUSTER_NAME" --nodegroup-name "${EKS_CLUSTER_NAME}-workers" --region "$AWS_REGION" >/dev/null 2>&1; then
+              echo "Importing EKS node group: ${EKS_CLUSTER_NAME}:workers"
+              terraform import -input=false -lock=false module.eks.aws_eks_node_group.this "${EKS_CLUSTER_NAME}:${EKS_CLUSTER_NAME}-workers" || echo "Import EKS node group failed (continuing)"
+            fi
+          else
+            echo "Skipping EKS cluster and nodegroup imports because TF_VAR_skip_eks_import=true"
           fi
 
           export TF_IN_AUTOMATION=true
@@ -159,10 +164,14 @@ jobs:
           fi
 
           # 3) EKS cluster security group
-          SG_EKS=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$EKS_CLUSTER_SG_NAME" --query 'SecurityGroups[0].GroupId' --region "$AWS_REGION" --output text 2>/dev/null || true)
-          if [[ -n "$SG_EKS" && "$SG_EKS" != "None" ]]; then
-            echo "Importing EKS cluster security group: $SG_EKS"
-            terraform import -input=false -lock=false module.eks.aws_security_group.cluster "$SG_EKS" || echo "Import EKS SG failed (continuing)"
+          if [[ "${TF_VAR_skip_eks_import:-false}" != "true" ]]; then
+            SG_EKS=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$EKS_CLUSTER_SG_NAME" --query 'SecurityGroups[0].GroupId' --region "$AWS_REGION" --output text 2>/dev/null || true)
+            if [[ -n "$SG_EKS" && "$SG_EKS" != "None" ]]; then
+              echo "Importing EKS cluster security group: $SG_EKS"
+              terraform import -input=false -lock=false module.eks.aws_security_group.cluster "$SG_EKS" || echo "Import EKS SG failed (continuing)"
+            fi
+          else
+            echo "Skipping EKS security group import because TF_VAR_skip_eks_import=true"
           fi
 
           # 4) RDS security group
@@ -294,9 +303,10 @@ jobs:
           if [[ -n "$EKS_ENDPOINT" && "$EKS_ENDPOINT" != "None" && -n "$EKS_CA" && "$EKS_CA" != "None" ]]; then
             echo "TF_VAR_kubernetes_host=$EKS_ENDPOINT" >> "$GITHUB_ENV"
             echo "TF_VAR_kubernetes_cluster_ca_certificate=$EKS_CA" >> "$GITHUB_ENV"
+            echo "TF_VAR_skip_eks_import=false" >> "$GITHUB_ENV"
           else
-            echo "ERROR: Could not resolve EKS connection details for $EKS_CLUSTER_NAME. The cluster must already exist before auto-import runs."
-            exit 1
+            echo "WARNING: Could not resolve EKS connection details for $EKS_CLUSTER_NAME. Skipping EKS-related imports."
+            echo "TF_VAR_skip_eks_import=true" >> "$GITHUB_ENV"
           fi
           echo "TF_VAR_resource_suffix=" >> "$GITHUB_ENV"
           echo "TF_VAR_use_default_vpc=true" >> "$GITHUB_ENV"
@@ -355,27 +365,30 @@ jobs:
           fi
 
           # 5) IAM roles: cluster, node, cognito-authenticated
-          if aws iam get-role --role-name "$EKS_CLUSTER_ROLE_NAME" >/dev/null 2>&1; then
-            ARN=$(aws iam get-role --role-name "$EKS_CLUSTER_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
-            if [[ -n "$ARN" ]]; then
-              echo "Importing IAM role (cluster): $ARN"
-              terraform import -input=false -lock=false module.eks.aws_iam_role.cluster "$ARN" || echo "Import IAM cluster role failed"
+          if [[ "${TF_VAR_skip_eks_import:-false}" != "true" ]]; then
+            if aws iam get-role --role-name "$EKS_CLUSTER_ROLE_NAME" >/dev/null 2>&1; then
+              ARN=$(aws iam get-role --role-name "$EKS_CLUSTER_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
+              if [[ -n "$ARN" ]]; then
+                echo "Importing IAM role (cluster): $ARN"
+                terraform import -input=false -lock=false module.eks.aws_iam_role.cluster "$ARN" || echo "Import IAM cluster role failed"
+              fi
             fi
-          fi
 
-          if aws iam get-role --role-name "$EKS_NODE_ROLE_NAME" >/dev/null 2>&1; then
-            ARN=$(aws iam get-role --role-name "$EKS_NODE_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
-            if [[ -n "$ARN" ]]; then
-              echo "Importing IAM role (node): $ARN"
-              terraform import -input=false -lock=false module.eks.aws_iam_role.node "$ARN" || echo "Import IAM node role failed"
+            if aws iam get-role --role-name "$EKS_NODE_ROLE_NAME" >/dev/null 2>&1; then
+              ARN=$(aws iam get-role --role-name "$EKS_NODE_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
+              if [[ -n "$ARN" ]]; then
+                echo "Importing IAM role (node): $ARN"
+                terraform import -input=false -lock=false module.eks.aws_iam_role.node "$ARN" || echo "Import IAM node role failed"
+              fi
             fi
-          fi
-
-          if aws iam get-role --role-name "$COGNITO_ROLE_NAME" >/dev/null 2>&1; then
-            ARN=$(aws iam get-role --role-name "$COGNITO_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
-            if [[ -n "$ARN" ]]; then
-              echo "Importing IAM role (cognito authenticated): $ARN"
-              terraform import -input=false -lock=false module.cognito.aws_iam_role.cognito_authenticated "$ARN" || echo "Import IAM cognito role failed"
+          else
+            echo "Skipping EKS IAM role imports because TF_VAR_skip_eks_import=true"
+            if aws iam get-role --role-name "$COGNITO_ROLE_NAME" >/dev/null 2>&1; then
+              ARN=$(aws iam get-role --role-name "$COGNITO_ROLE_NAME" --query 'Role.Arn' --output text 2>/dev/null || true)
+              if [[ -n "$ARN" ]]; then
+                echo "Importing IAM role (cognito authenticated): $ARN"
+                terraform import -input=false -lock=false module.cognito.aws_iam_role.cognito_authenticated "$ARN" || echo "Import IAM cognito role failed"
+              fi
             fi
           fi
 
