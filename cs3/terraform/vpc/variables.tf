@@ -44,6 +44,12 @@ variable "use_default_vpc" {
   description = "Reuse the account default VPC instead of creating a new one"
 }
 
+variable "enable_ssm_vpc_endpoints" {
+  type        = bool
+  default     = true
+  description = "Create interface VPC endpoints for SSM, SSMMessages, and EC2Messages"
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

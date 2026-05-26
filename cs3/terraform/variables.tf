@@ -46,7 +46,7 @@ variable "use_default_vpc" {
 
 variable "resource_suffix" {
   type        = string
-  default     = "v6"
+  default     = ""
   description = "Suffix appended to resource names to avoid collisions"
 }
 

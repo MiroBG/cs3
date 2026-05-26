@@ -4,6 +4,8 @@ locals {
   })
 }
 
+data "aws_region" "current" {}
+
 data "aws_vpcs" "default" {
   filter {
     name   = "isDefault"
@@ -65,6 +67,16 @@ locals {
   public_subnet_ids   = local.create_vpc ? [for subnet in values(aws_subnet.public) : subnet.id] : local.existing_subnet_ids
   private_subnet_ids  = local.create_vpc ? [for subnet in values(aws_subnet.private) : subnet.id] : local.existing_subnet_ids
   database_subnet_ids = local.create_vpc ? [for subnet in values(aws_subnet.database) : subnet.id] : local.existing_subnet_ids
+}
+
+data "aws_vpc" "selected" {
+  count = local.create_vpc ? 0 : 1
+  id    = local.vpc_id
+}
+
+locals {
+  endpoint_subnet_ids = length(local.private_subnet_ids) > 0 ? local.private_subnet_ids : local.public_subnet_ids
+  endpoint_vpc_cidr   = local.create_vpc ? var.vpc_cidr : data.aws_vpc.selected[0].cidr_block
 }
 
 resource "aws_internet_gateway" "this" {
@@ -184,6 +196,74 @@ resource "aws_route_table_association" "private" {
   route_table_id = aws_route_table.private[0].id
 }
 
+resource "aws_security_group" "vpc_endpoints" {
+  count       = var.enable_ssm_vpc_endpoints ? 1 : 0
+  name        = "${var.name_prefix}-ssm-endpoints-sg"
+  description = "Allow VPC access to Systems Manager endpoints"
+  vpc_id      = local.vpc_id
+
+  ingress {
+    description = "HTTPS from VPC"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = [local.endpoint_vpc_cidr]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  tags = merge(local.common_tags, {
+    Name = "${var.name_prefix}-ssm-endpoints-sg"
+  })
+}
+
+resource "aws_vpc_endpoint" "ssm" {
+  count               = var.enable_ssm_vpc_endpoints && length(local.endpoint_subnet_ids) > 0 ? 1 : 0
+  vpc_id              = local.vpc_id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.ssm"
+  vpc_endpoint_type   = "Interface"
+  private_dns_enabled = true
+  subnet_ids          = local.endpoint_subnet_ids
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
+
+  tags = merge(local.common_tags, {
+    Name = "${var.name_prefix}-vpce-ssm"
+  })
+}
+
+resource "aws_vpc_endpoint" "ssmmessages" {
+  count               = var.enable_ssm_vpc_endpoints && length(local.endpoint_subnet_ids) > 0 ? 1 : 0
+  vpc_id              = local.vpc_id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.ssmmessages"
+  vpc_endpoint_type   = "Interface"
+  private_dns_enabled = true
+  subnet_ids          = local.endpoint_subnet_ids
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
+
+  tags = merge(local.common_tags, {
+    Name = "${var.name_prefix}-vpce-ssmmessages"
+  })
+}
+
+resource "aws_vpc_endpoint" "ec2messages" {
+  count               = var.enable_ssm_vpc_endpoints && length(local.endpoint_subnet_ids) > 0 ? 1 : 0
+  vpc_id              = local.vpc_id
+  service_name        = "com.amazonaws.${data.aws_region.current.name}.ec2messages"
+  vpc_endpoint_type   = "Interface"
+  private_dns_enabled = true
+  subnet_ids          = local.endpoint_subnet_ids
+  security_group_ids  = [aws_security_group.vpc_endpoints[0].id]
+
+  tags = merge(local.common_tags, {
+    Name = "${var.name_prefix}-vpce-ec2messages"
+  })
+}
+
 output "vpc_id" {
   value = local.vpc_id
 }
@@ -207,4 +287,24 @@ output "internet_gateway_id" {
 output "nat_gateway_id" {
   value       = try(aws_nat_gateway.this[0].id, null)
   description = "NAT gateway id when enabled"
+}
+
+output "ssm_endpoint_id" {
+  value       = try(aws_vpc_endpoint.ssm[0].id, null)
+  description = "Interface VPC endpoint id for SSM"
+}
+
+output "ssmmessages_endpoint_id" {
+  value       = try(aws_vpc_endpoint.ssmmessages[0].id, null)
+  description = "Interface VPC endpoint id for SSMMessages"
+}
+
+output "ec2messages_endpoint_id" {
+  value       = try(aws_vpc_endpoint.ec2messages[0].id, null)
+  description = "Interface VPC endpoint id for EC2Messages"
+}
+
+output "ssm_endpoints_security_group_id" {
+  value       = try(aws_security_group.vpc_endpoints[0].id, null)
+  description = "Security group id attached to Systems Manager interface endpoints"
 }
