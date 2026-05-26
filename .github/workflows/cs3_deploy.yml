@@ -375,7 +375,12 @@ jobs:
 
           if aws iam get-role --role-name "$K3S_ROLE_NAME" >/dev/null 2>&1; then
             tf_import_if_needed "module.ec2_k3s.aws_iam_role.k3s" "$K3S_ROLE_NAME"
-            tf_import_if_needed "module.ec2_k3s.aws_iam_role_policy_attachment.k3s_ssm" "$K3S_ROLE_NAME/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+            K3S_SSM_ATTACHED=$(aws iam list-attached-role-policies --role-name "$K3S_ROLE_NAME" --region "$AWS_REGION" --query "AttachedPolicies[?PolicyArn=='arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore'].PolicyArn | [0]" --output text 2>/dev/null || echo "")
+            if [[ -n "$K3S_SSM_ATTACHED" && "$K3S_SSM_ATTACHED" != "None" ]]; then
+              tf_import_if_needed "module.ec2_k3s.aws_iam_role_policy_attachment.k3s_ssm" "$K3S_ROLE_NAME/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+            else
+              echo "SSM policy not attached yet. Terraform will create attachment."
+            fi
           fi
 
           if aws iam get-instance-profile --instance-profile-name "$K3S_PROFILE_NAME" >/dev/null 2>&1; then
