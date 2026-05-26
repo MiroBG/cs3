@@ -60,6 +60,14 @@ for i in {1..60}; do
   sleep 5
 done
 
+# Export kubeconfig as soon as k3s is available so SSM can fetch it while the
+# rest of bootstrap continues.
+echo "====== Creating kubeconfig Export ======"
+mkdir -p /opt/k3s
+cp /etc/rancher/k3s/k3s.yaml /opt/k3s/kubeconfig.yaml
+sed -i "s|https://127.0.0.1:6443|https://$${PUBLIC_IP}:6443|g" /opt/k3s/kubeconfig.yaml
+chmod 644 /opt/k3s/kubeconfig.yaml
+
 # Add k3s to PATH
 export PATH=$PATH:/usr/local/bin
 
@@ -117,13 +125,6 @@ EOF
 echo "====== Setting up Portal Namespace ======"
 # Create namespace for portal application
 kubectl create namespace portal --dry-run=client -o yaml | kubectl apply -f -
-
-echo "====== Creating kubeconfig Export ======"
-# Export kubeconfig to accessible location
-mkdir -p /opt/k3s
-cp /etc/rancher/k3s/k3s.yaml /opt/k3s/kubeconfig.yaml
-sed -i "s|https://127.0.0.1:6443|https://$${PUBLIC_IP}:6443|g" /opt/k3s/kubeconfig.yaml
-chmod 644 /opt/k3s/kubeconfig.yaml
 
 echo "====== Setup Complete ======"
 echo "Timestamp: $(date)"
