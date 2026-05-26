@@ -328,28 +328,41 @@ jobs:
             return 1
           }
 
-          # ECR
-          if aws ecr describe-repositories --repository-names "$ECR_REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+          # ECR (only import if repo exists in AWS)
+          ECR_REPO_EXISTS=$(aws ecr describe-repositories --repository-names "$ECR_REPO_NAME" --region "$AWS_REGION" --query 'repositories[0].repositoryUri' --output text 2>/dev/null || echo "")
+          if [[ -n "$ECR_REPO_EXISTS" && "$ECR_REPO_EXISTS" != "None" ]]; then
             tf_import_if_needed "module.ecr.aws_ecr_repository.portal" "$ECR_REPO_NAME"
+          else
+            echo "ECR repo not found in AWS. Terraform will create it."
           fi
 
-          # CloudWatch log group created by module.ecr
-          if aws logs describe-log-groups --log-group-name-prefix "$PORTAL_LOG_GROUP_NAME" --region "$AWS_REGION" --query "logGroups[?logGroupName=='$PORTAL_LOG_GROUP_NAME'].logGroupName | [0]" --output text >/dev/null 2>&1; then
+          # CloudWatch log group (only if it actually exists; skip for EC2 k3s which doesn't auto-create it)
+          PORTAL_LOG_EXISTS=$(aws logs describe-log-groups --log-group-name-prefix "$PORTAL_LOG_GROUP_NAME" --region "$AWS_REGION" --query "logGroups[?logGroupName=='$PORTAL_LOG_GROUP_NAME'].logGroupName | [0]" --output text 2>/dev/null || echo "")
+          if [[ -n "$PORTAL_LOG_EXISTS" && "$PORTAL_LOG_EXISTS" != "None" ]]; then
             tf_import_if_needed "module.ecr.aws_cloudwatch_log_group.portal" "$PORTAL_LOG_GROUP_NAME"
+          else
+            echo "CloudWatch log group not found. Skipping import."
           fi
 
           # Cognito core resources
-          COGNITO_USER_POOL_ID=$(aws cognito-idp list-user-pools --max-results 60 --region "$AWS_REGION" --query "UserPools[?Name=='$COGNITO_USER_POOL_NAME'].Id | [0]" --output text 2>/dev/null || true)
-          tf_import_if_needed "module.cognito.aws_cognito_user_pool.this" "$COGNITO_USER_POOL_ID"
-
+          COGNITO_USER_POOL_ID=$(aws cognito-idp list-user-pools --max-results 60 --region "$AWS_REGION" --query "UserPools[?Name=='$COGNITO_USER_POOL_NAME'].Id | [0]" --output text 2>/dev/null || echo "")
           if [[ -n "$COGNITO_USER_POOL_ID" && "$COGNITO_USER_POOL_ID" != "None" ]]; then
-            COGNITO_CLIENT_ID=$(aws cognito-idp list-user-pool-clients --user-pool-id "$COGNITO_USER_POOL_ID" --region "$AWS_REGION" --query "UserPoolClients[?ClientName=='$COGNITO_USER_POOL_CLIENT_NAME'].ClientId | [0]" --output text 2>/dev/null || true)
-            tf_import_if_needed "module.cognito.aws_cognito_user_pool_client.this" "$COGNITO_USER_POOL_ID/$COGNITO_CLIENT_ID"
+            tf_import_if_needed "module.cognito.aws_cognito_user_pool.this" "$COGNITO_USER_POOL_ID"
 
+            COGNITO_CLIENT_ID=$(aws cognito-idp list-user-pool-clients --user-pool-id "$COGNITO_USER_POOL_ID" --region "$AWS_REGION" --query "UserPoolClients[?ClientName=='$COGNITO_USER_POOL_CLIENT_NAME'].ClientId | [0]" --output text 2>/dev/null || echo "")
+            if [[ -n "$COGNITO_CLIENT_ID" && "$COGNITO_CLIENT_ID" != "None" ]]; then
+              tf_import_if_needed "module.cognito.aws_cognito_user_pool_client.this" "$COGNITO_USER_POOL_ID/$COGNITO_CLIENT_ID"
+            fi
+          else
+            echo "Cognito user pool not found. Terraform will create it."
           fi
 
-          COGNITO_IDENTITY_POOL_ID=$(aws cognito-identity list-identity-pools --max-results 60 --region "$AWS_REGION" --query "IdentityPools[?IdentityPoolName=='$COGNITO_IDENTITY_POOL_NAME'].IdentityPoolId | [0]" --output text 2>/dev/null || true)
-          tf_import_if_needed "aws_cognito_identity_pool.this" "$COGNITO_IDENTITY_POOL_ID"
+          COGNITO_IDENTITY_POOL_ID=$(aws cognito-identity list-identity-pools --max-results 60 --region "$AWS_REGION" --query "IdentityPools[?IdentityPoolName=='$COGNITO_IDENTITY_POOL_NAME'].IdentityPoolId | [0]" --output text 2>/dev/null || echo "")
+          if [[ -n "$COGNITO_IDENTITY_POOL_ID" && "$COGNITO_IDENTITY_POOL_ID" != "None" ]]; then
+            tf_import_if_needed "aws_cognito_identity_pool.this" "$COGNITO_IDENTITY_POOL_ID"
+          else
+            echo "Cognito identity pool not found. Terraform will create it."
+          fi
 
           if aws iam get-role --role-name "$COGNITO_ROLE_NAME" >/dev/null 2>&1; then
             tf_import_if_needed "module.cognito.aws_iam_role.cognito_authenticated" "$COGNITO_ROLE_NAME"
@@ -375,10 +388,14 @@ jobs:
           K3S_EIP_ALLOC_ID=$(aws ec2 describe-addresses --region "$AWS_REGION" --filters "Name=tag:Name,Values=$K3S_EIP_NAME" --query "Addresses[0].AllocationId" --output text 2>/dev/null || true)
           tf_import_if_needed "module.ec2_k3s.aws_eip.k3s" "$K3S_EIP_ALLOC_ID"
 
-          # WAF
-          WAF_ID=$(aws wafv2 list-web-acls --scope REGIONAL --region "$AWS_REGION" --query "WebACLs[?Name=='$WAF_NAME'].Id | [0]" --output text 2>/dev/null || true)
-          WAF_IMPORT_ID="${WAF_ID}/${WAF_NAME}/REGIONAL"
-          tf_import_if_needed "module.waf.aws_wafv2_web_acl.portal" "$WAF_IMPORT_ID"
+          # WAF (only if exists)
+          WAF_ID=$(aws wafv2 list-web-acls --scope REGIONAL --region "$AWS_REGION" --query "WebACLs[?Name=='$WAF_NAME'].Id | [0]" --output text 2>/dev/null || echo "")
+          if [[ -n "$WAF_ID" && "$WAF_ID" != "None" ]]; then
+            WAF_IMPORT_ID="${WAF_ID}/${WAF_NAME}/REGIONAL"
+            tf_import_if_needed "module.waf.aws_wafv2_web_acl.portal" "$WAF_IMPORT_ID"
+          else
+            echo "WAF not found. Terraform will create it."
+          fi
 
           echo "Auto-import complete."
 
