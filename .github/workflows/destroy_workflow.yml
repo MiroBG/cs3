@@ -71,6 +71,19 @@ jobs:
           if [[ -n "$GRAFANA_PASSWORD" ]]; then
             echo "TF_VAR_grafana_admin_password=$GRAFANA_PASSWORD" >> "$GITHUB_ENV"
           fi
+          echo "TF_VAR_enable_logging=false" >> "$GITHUB_ENV"
+
+      - name: Remove Helm releases from logging namespace (if reachable)
+        continue-on-error: true
+        run: |
+          set +e
+          # Try to retrieve kubeconfig from EC2 if logging was enabled
+          if [[ -d ".generated/k3s" && -f ".generated/k3s/kubeconfig.yaml" ]]; then
+            export KUBECONFIG=".generated/k3s/kubeconfig.yaml"
+            helm list --namespace logging && helm delete -n logging loki 2>/dev/null || true
+            helm list --namespace monitoring && helm delete -n monitoring prometheus 2>/dev/null || true
+          fi
+          set -e
 
       - name: Terraform destroy (CS3)
         run: terraform destroy -auto-approve

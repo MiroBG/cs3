@@ -420,6 +420,7 @@ jobs:
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
           TF_VAR_manage_cognito_domain: "false"
+          TF_VAR_enable_logging: "false"
         run: terraform plan -input=false -out=tfplan
 
       - name: Terraform apply
@@ -429,7 +430,78 @@ jobs:
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
           TF_VAR_manage_cognito_domain: "false"
+          TF_VAR_enable_logging: "false"
         run: terraform apply -auto-approve tfplan
+
+      - name: Fetch k3s kubeconfig
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          mkdir -p .generated/k3s
+          K3S_INSTANCE_ID=$(terraform output -raw ec2_instance_id)
+
+          echo "Waiting for SSM agent on $K3S_INSTANCE_ID"
+          for i in $(seq 1 60); do
+            PING_STATUS=$(aws ssm describe-instance-information --region "$AWS_REGION" --filters "Key=InstanceIds,Values=$K3S_INSTANCE_ID" --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || true)
+            if [[ "$PING_STATUS" == "Online" ]]; then
+              break
+            fi
+            sleep 10
+          done
+
+          if [[ "$PING_STATUS" != "Online" ]]; then
+            echo "ERROR: SSM agent never came online for $K3S_INSTANCE_ID"
+            exit 1
+          fi
+
+          COMMAND_ID=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$K3S_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Fetch k3s kubeconfig" \
+            --parameters 'commands=sudo cat /opt/k3s/kubeconfig.yaml' \
+            --query 'Command.CommandId' \
+            --output text)
+
+          for i in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$COMMAND_ID" --instance-id "$K3S_INSTANCE_ID" --query 'Status' --output text 2>/dev/null || true)
+            if [[ "$STATUS" == "Success" ]]; then
+              break
+            fi
+            if [[ "$STATUS" == "Failed" || "$STATUS" == "Cancelled" || "$STATUS" == "TimedOut" ]]; then
+              echo "ERROR: SSM command failed with status $STATUS"
+              aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$COMMAND_ID" --instance-id "$K3S_INSTANCE_ID" --output json || true
+              exit 1
+            fi
+            sleep 10
+          done
+
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$K3S_INSTANCE_ID" \
+            --query 'StandardOutputContent' \
+            --output text > .generated/k3s/kubeconfig.yaml
+
+          if [[ ! -s .generated/k3s/kubeconfig.yaml ]]; then
+            echo "ERROR: kubeconfig fetch returned empty file"
+            exit 1
+          fi
+
+          echo "Fetched kubeconfig to .generated/k3s/kubeconfig.yaml"
+
+      - name: Terraform apply logging stack
+        env:
+          TF_LOG: DEBUG
+          TF_VAR_resource_suffix: ""
+          TF_VAR_db_password: "${{ secrets.CS3_DB_PASSWORD }}"
+          TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
+          TF_VAR_use_default_vpc: "true"
+          TF_VAR_manage_cognito_domain: "false"
+          TF_VAR_enable_logging: "true"
+          TF_VAR_kubeconfig_path: ".generated/k3s/kubeconfig.yaml"
+        run: terraform apply -auto-approve
 
       - name: Output Terraform values
         run: |

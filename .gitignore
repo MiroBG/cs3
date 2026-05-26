@@ -18,6 +18,9 @@ cs1/
 backend.hcl
 main/backend.hcl
 
+# Generated kubeconfig and terraform bootstrap files
+cs3/terraform/.generated/
+
 # Local keys
 *.pem
 

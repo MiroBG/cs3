@@ -100,6 +100,11 @@ output "grafana_admin_password" {
   description = "Grafana admin password (sensitive)"
 }
 
+output "kubeconfig_path" {
+  value       = local.kubeconfig_path
+  description = "Local kubeconfig path used by kubernetes and helm providers"
+}
+
 output "waf_web_acl_arn" {
   value       = module.waf.web_acl_arn
   description = "WAF Web ACL ARN for the portal"

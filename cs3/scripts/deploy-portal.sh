@@ -16,7 +16,7 @@ COGNITO_DOMAIN=$4
 RDS_HOST=${5:-rds.amazonaws.com}
 DB_PASSWORD=${6:-changeme}
 
-NAMESPACE="default"
+NAMESPACE="cs3-prod"
 FLASK_SECRET_KEY=$(openssl rand -hex 32)
 
 echo "🚀 Deploying CS3 portal to Kubernetes..."
@@ -31,6 +31,7 @@ sed -i "s|RDS_HOST_VALUE|$RDS_HOST|g" ./k8s/portal/deployment.yaml
 sed -i "s|RDS_PASSWORD_VALUE|$DB_PASSWORD|g" ./k8s/portal/deployment.yaml
 
 echo "📝 Applying Kubernetes manifests..."
+kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
 kubectl apply -f ./k8s/portal/
 
 echo "⏳ Waiting for portal deployment to be ready..."

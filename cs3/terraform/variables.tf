@@ -121,9 +121,15 @@ variable "logging_namespace" {
   default     = "logging"
 }
 
+variable "kubeconfig_path" {
+  type        = string
+  description = "Local kubeconfig path used by kubernetes and helm providers"
+  default     = ".generated/k3s/kubeconfig.yaml"
+}
+
 variable "enable_logging" {
   type        = bool
-  default     = true
+  default     = false
   description = "Enable Terraform-managed logging stack (requires configured kubernetes/helm providers)"
 }
 

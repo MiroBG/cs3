@@ -1,24 +1,25 @@
 terraform {
   required_version = ">= 1.0"
-
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
-    }
-  }
 }
 
 locals {
   resource_suffix_part = var.resource_suffix != "" ? "-${var.resource_suffix}" : ""
+  kubeconfig_path      = abspath("${path.root}/${var.kubeconfig_path}")
+  kubeconfig_ready     = fileexists(local.kubeconfig_path)
 }
 
 provider "aws" {
   region = var.region
+}
+
+provider "kubernetes" {
+  config_path = local.kubeconfig_ready ? local.kubeconfig_path : null
+}
+
+provider "helm" {
+  kubernetes {
+    config_path = local.kubeconfig_ready ? local.kubeconfig_path : null
+  }
 }
 
 module "vpc" {
@@ -88,7 +89,7 @@ module "ecr" {
 
 module "logging" {
   # Logging module uses kubernetes/helm providers; keep it optional for EC2+k3s mode.
-  count  = var.enable_logging ? 1 : 0
+  count  = var.enable_logging && local.kubeconfig_ready ? 1 : 0
   source = "./logging"
 
   logging_namespace      = var.logging_namespace
