@@ -464,12 +464,20 @@ jobs:
             exit 1
           fi
 
+          cat > /tmp/ssm-fetch-kubeconfig.json <<'EOF'
+          {
+            "commands": [
+              "sudo bash -lc 'for i in $(seq 1 180); do if [[ -s /opt/k3s/kubeconfig.yaml ]]; then base64 -w 0 /opt/k3s/kubeconfig.yaml; exit 0; fi; echo waiting for kubeconfig... >&2; sleep 10; done; echo kubeconfig not ready >&2; exit 1'"
+            ]
+          }
+          EOF
+
           COMMAND_ID=$(aws ssm send-command \
             --region "$AWS_REGION" \
             --instance-ids "$K3S_INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --comment "Fetch k3s kubeconfig" \
-            --parameters 'commands=sudo bash -lc '\''for i in $(seq 1 180); do if [[ -s /opt/k3s/kubeconfig.yaml ]]; then base64 -w 0 /opt/k3s/kubeconfig.yaml; exit 0; fi; echo waiting for kubeconfig... >&2; sleep 10; done; echo kubeconfig not ready >&2; exit 1'\''' \
+            --parameters file:///tmp/ssm-fetch-kubeconfig.json \
             --query 'Command.CommandId' \
             --output text)
 
