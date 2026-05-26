@@ -13,6 +13,7 @@ concurrency:
 
 env:
   AWS_REGION: eu-central-1
+  AUTO_DB_INIT: "${{ secrets.AUTO_DB_INIT || 'false' }}"
   TF_IN_AUTOMATION: "true"
 
 jobs:
@@ -286,7 +287,14 @@ jobs:
           echo "Looking up and importing resources (idempotent mode)"
 
           tf_in_state() {
-            terraform state show "$1" >/dev/null 2>&1
+            # Check if address exists in state. Try plain and indexed form for counted resources.
+            if terraform state show "$1" >/dev/null 2>&1; then
+              return 0
+            fi
+            if terraform state show "${1}[0]" >/dev/null 2>&1; then
+              return 0
+            fi
+            return 1
           }
 
           tf_import_if_needed() {
@@ -302,8 +310,22 @@ jobs:
               return 0
             fi
 
-            echo "Importing $address => $import_id"
-            terraform import -input=false -lock=false "$address" "$import_id" >/dev/null 2>&1 || echo "  (skipped: import failed)"
+            # Try plain address first, then indexed [0] form for counted resources
+            echo "Attempting import: $address => $import_id"
+            if terraform import -input=false -lock=false "$address" "$import_id" >/dev/null 2>&1; then
+              echo "Imported $address"
+              return 0
+            fi
+
+            idx_addr="${address}[0]"
+            echo "Attempting indexed import: $idx_addr => $import_id"
+            if terraform import -input=false -lock=false "$idx_addr" "$import_id" >/dev/null 2>&1; then
+              echo "Imported $idx_addr"
+              return 0
+            fi
+
+            echo "  (skipped: import failed for $address and $idx_addr)"
+            return 1
           }
 
           # ECR

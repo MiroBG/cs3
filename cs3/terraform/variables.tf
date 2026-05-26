@@ -73,6 +73,12 @@ variable "db_password" {
   description = "PostgreSQL password (running on EC2 instance)"
 }
 
+variable "auto_db_init" {
+  type        = bool
+  description = "If true, CI will automatically initialize database schema after apply"
+  default     = false
+}
+
 variable "cognito_domain" {
   type        = string
   description = "Cognito domain name (must be globally unique)"

@@ -125,10 +125,24 @@ locals {
     db_password            = var.db_password
     grafana_admin_password = var.grafana_admin_password
   }))
+  instance_name = "${var.name_prefix}-k3s${var.resource_suffix_part}"
 }
 
-# EC2 Instance
+# Look for existing k3s instances (idempotency: avoid creating duplicates)
+data "aws_instances" "existing_k3s" {
+  filter {
+    name   = "tag:Name"
+    values = [local.instance_name]
+  }
+  filter {
+    name   = "instance-state-name"
+    values = ["pending", "running", "stopping", "stopped"]
+  }
+}
+
+# EC2 Instance (only create if none exist)
 resource "aws_instance" "k3s" {
+  count                  = length(data.aws_instances.existing_k3s.ids) > 0 ? 0 : 1
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = var.subnet_id
@@ -136,7 +150,7 @@ resource "aws_instance" "k3s" {
   iam_instance_profile   = aws_iam_instance_profile.k3s.name
 
   user_data                   = local.user_data
-  user_data_replace_on_change = true
+  user_data_replace_on_change = false
 
   root_block_device {
     volume_type           = "gp3"
@@ -149,27 +163,31 @@ resource "aws_instance" "k3s" {
   associate_public_ip_address = true
 
   tags = merge(local.common_tags, {
-    Name = "${var.name_prefix}-k3s${var.resource_suffix_part}"
+    Name = local.instance_name
   })
 
   depends_on = [aws_iam_instance_profile.k3s]
 }
 
-# Elastic IP for stable access
+# Reference either existing or newly created instance
+data "aws_instance" "k3s_target" {
+  instance_id = length(data.aws_instances.existing_k3s.ids) > 0 ? data.aws_instances.existing_k3s.ids[0] : aws_instance.k3s[0].id
+  depends_on  = [aws_instance.k3s]
+}
+
+# Elastic IP for stable access (associate with existing or new instance)
 resource "aws_eip" "k3s" {
-  instance = aws_instance.k3s.id
-  domain   = "vpc"
+  instance   = data.aws_instance.k3s_target.id
+  domain     = "vpc"
+  depends_on = [aws_instance.k3s]
 
   tags = merge(local.common_tags, {
     Name = "${var.name_prefix}-k3s-eip${var.resource_suffix_part}"
   })
-
-  depends_on = [aws_instance.k3s]
 }
 
 # Wait for instance to be ready and retrieve kubeconfig
 data "aws_instance" "k3s" {
-  instance_id = aws_instance.k3s.id
-
-  depends_on = [aws_instance.k3s]
+  instance_id = data.aws_instance.k3s_target.id
+  depends_on  = [aws_eip.k3s]
 }
