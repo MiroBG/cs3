@@ -40,7 +40,7 @@ variable "enable_nat_gateway" {
 
 variable "use_default_vpc" {
   type        = bool
-  default     = true
+  default     = false
   description = "Reuse the AWS account default VPC instead of creating a new one"
 }
 
