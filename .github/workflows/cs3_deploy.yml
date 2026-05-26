@@ -276,6 +276,7 @@ jobs:
           COGNITO_ROLE_POLICY_NAME="${COGNITO_USER_POOL_NAME}-authenticated-policy"
           WAF_NAME="${NAME_PREFIX}-portal-waf${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           K3S_SG_NAME="${NAME_PREFIX}-k3s-sg${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          VPC_ENDPOINT_SG_NAME="${NAME_PREFIX}-ssm-endpoints-sg"
           K3S_ROLE_NAME="${NAME_PREFIX}-k3s-role${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           K3S_PROFILE_NAME="${NAME_PREFIX}-k3s-profile${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           K3S_INSTANCE_NAME="${NAME_PREFIX}-k3s${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
@@ -354,6 +355,11 @@ jobs:
               tf_import_if_needed "module.ec2_k3s.aws_security_group.k3s" "$K3S_SG_ID"
             fi
 
+            VPC_ENDPOINT_SG_ID=$(aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=group-name,Values=$VPC_ENDPOINT_SG_NAME" "Name=vpc-id,Values=$K3S_VPC_ID" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+            if [[ -n "$VPC_ENDPOINT_SG_ID" && "$VPC_ENDPOINT_SG_ID" != "None" ]]; then
+              tf_import_if_needed "module.vpc.aws_security_group.vpc_endpoints[0]" "$VPC_ENDPOINT_SG_ID"
+            fi
+
             if aws iam get-role --role-name "$K3S_ROLE_NAME" >/dev/null 2>&1; then
               tf_import_if_needed "module.ec2_k3s.aws_iam_role.k3s" "$K3S_ROLE_NAME"
               tf_import_if_needed "module.ec2_k3s.aws_iam_role_policy_attachment.k3s_ssm" "$K3S_ROLE_NAME/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
@@ -416,6 +422,12 @@ jobs:
 
           K3S_INSTANCE_ID=$(aws ec2 describe-instances --region "$AWS_REGION" --filters "Name=tag:Name,Values=$K3S_INSTANCE_NAME" "Name=instance-state-name,Values=pending,running,stopping,stopped" --query "Reservations[].Instances[].InstanceId | [0]" --output text 2>/dev/null || true)
           tf_import_if_needed "module.ec2_k3s.aws_instance.k3s" "$K3S_INSTANCE_ID"
+
+          if [[ -n "$K3S_INSTANCE_ID" && "$K3S_INSTANCE_ID" != "None" ]]; then
+            K3S_VPC_ID=$(aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$K3S_INSTANCE_ID" --query 'Reservations[0].Instances[0].VpcId' --output text 2>/dev/null || echo "")
+            VPC_ENDPOINT_SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$VPC_ENDPOINT_SG_NAME" "Name=vpc-id,Values=$K3S_VPC_ID" --region "$AWS_REGION" --query "SecurityGroups[0].GroupId" --output text 2>/dev/null || true)
+            tf_import_if_needed "module.vpc.aws_security_group.vpc_endpoints[0]" "$VPC_ENDPOINT_SG_ID"
+          fi
 
           K3S_EIP_ALLOC_ID=$(aws ec2 describe-addresses --region "$AWS_REGION" --filters "Name=tag:Name,Values=$K3S_EIP_NAME" --query "Addresses[0].AllocationId" --output text 2>/dev/null || true)
           tf_import_if_needed "module.ec2_k3s.aws_eip.k3s" "$K3S_EIP_ALLOC_ID"
