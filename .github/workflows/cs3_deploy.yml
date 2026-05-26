@@ -332,6 +332,7 @@ jobs:
           ECR_REPO_EXISTS=$(aws ecr describe-repositories --repository-names "$ECR_REPO_NAME" --region "$AWS_REGION" --query 'repositories[0].repositoryUri' --output text 2>/dev/null || echo "")
           if [[ -n "$ECR_REPO_EXISTS" && "$ECR_REPO_EXISTS" != "None" ]]; then
             tf_import_if_needed "module.ecr.aws_ecr_repository.portal" "$ECR_REPO_NAME"
+            tf_import_if_needed "module.ecr.aws_ecr_lifecycle_policy.portal" "$ECR_REPO_NAME"
           else
             echo "ECR repo not found in AWS. Terraform will create it."
           fi
@@ -342,6 +343,32 @@ jobs:
             tf_import_if_needed "module.ecr.aws_cloudwatch_log_group.portal" "$PORTAL_LOG_GROUP_NAME"
           else
             echo "CloudWatch log group not found. Skipping import."
+          fi
+
+          # EC2 k3s resources
+          K3S_INSTANCE_ID=$(aws ec2 describe-instances --region "$AWS_REGION" --filters "Name=tag:Name,Values=$K3S_INSTANCE_NAME" "Name=instance-state-name,Values=pending,running,stopping,stopped" --query 'Reservations[0].Instances[0].InstanceId' --output text 2>/dev/null || echo "")
+          if [[ -n "$K3S_INSTANCE_ID" && "$K3S_INSTANCE_ID" != "None" ]]; then
+            K3S_VPC_ID=$(aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$K3S_INSTANCE_ID" --query 'Reservations[0].Instances[0].VpcId' --output text 2>/dev/null || echo "")
+            K3S_SG_ID=$(aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=group-name,Values=$K3S_SG_NAME" "Name=vpc-id,Values=$K3S_VPC_ID" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+            if [[ -n "$K3S_SG_ID" && "$K3S_SG_ID" != "None" ]]; then
+              tf_import_if_needed "module.ec2_k3s.aws_security_group.k3s" "$K3S_SG_ID"
+            fi
+
+            if aws iam get-role --role-name "$K3S_ROLE_NAME" >/dev/null 2>&1; then
+              tf_import_if_needed "module.ec2_k3s.aws_iam_role.k3s" "$K3S_ROLE_NAME"
+              tf_import_if_needed "module.ec2_k3s.aws_iam_role_policy_attachment.k3s_ssm" "$K3S_ROLE_NAME/arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+            fi
+
+            if aws iam get-instance-profile --instance-profile-name "$K3S_PROFILE_NAME" >/dev/null 2>&1; then
+              tf_import_if_needed "module.ec2_k3s.aws_iam_instance_profile.k3s" "$K3S_PROFILE_NAME"
+            fi
+
+            tf_import_if_needed "module.ec2_k3s.aws_instance.k3s" "$K3S_INSTANCE_ID"
+
+            K3S_EIP_ALLOC_ID=$(aws ec2 describe-addresses --region "$AWS_REGION" --filters "Name=tag:Name,Values=$K3S_EIP_NAME" --query 'Addresses[0].AllocationId' --output text 2>/dev/null || echo "")
+            if [[ -n "$K3S_EIP_ALLOC_ID" && "$K3S_EIP_ALLOC_ID" != "None" ]]; then
+              tf_import_if_needed "module.ec2_k3s.aws_eip.k3s" "$K3S_EIP_ALLOC_ID"
+            fi
           fi
 
           # Cognito core resources
