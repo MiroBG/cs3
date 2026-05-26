@@ -123,7 +123,7 @@ variable "logging_namespace" {
 
 variable "enable_logging" {
   type        = bool
-  default     = false
+  default     = true
   description = "Enable Terraform-managed logging stack (requires configured kubernetes/helm providers)"
 }
 
