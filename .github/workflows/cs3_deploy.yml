@@ -467,7 +467,7 @@ jobs:
           cat > /tmp/ssm-fetch-kubeconfig.json <<'EOF'
           {
             "commands": [
-              "sudo sh -lc 'for i in $(seq 1 180); do if [ -s /opt/k3s/kubeconfig.yaml ]; then cat /opt/k3s/kubeconfig.yaml | base64; exit 0; fi; echo waiting for kubeconfig... >&2; sleep 10; done; echo kubeconfig not ready >&2; exit 1'"
+              "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do if [ -s /opt/k3s/kubeconfig.yaml ]; then sudo cat /opt/k3s/kubeconfig.yaml; exit 0; fi; echo 'Waiting for kubeconfig...' >&2; sleep 10; done; echo 'ERROR: kubeconfig not ready after 3m' >&2; exit 1"
             ]
           }
           EOF
@@ -481,9 +481,11 @@ jobs:
             --query 'Command.CommandId' \
             --output text)
 
-          for i in $(seq 1 60); do
+          echo "Waiting for SSM command $COMMAND_ID to complete (timeout: 10 minutes)"
+          for i in $(seq 1 120); do
             STATUS=$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$COMMAND_ID" --instance-id "$K3S_INSTANCE_ID" --query 'Status' --output text 2>/dev/null || true)
             if [[ "$STATUS" == "Success" ]]; then
+              echo "Command succeeded"
               break
             fi
             if [[ "$STATUS" == "Failed" || "$STATUS" == "Cancelled" || "$STATUS" == "TimedOut" ]]; then
@@ -491,7 +493,10 @@ jobs:
               aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$COMMAND_ID" --instance-id "$K3S_INSTANCE_ID" --output json || true
               exit 1
             fi
-            sleep 10
+            if [[ $((i % 12)) -eq 0 ]]; then
+              echo "Still waiting... (attempt $i/120, status=$STATUS)"
+            fi
+            sleep 5
           done
 
           aws ssm get-command-invocation \
@@ -499,7 +504,7 @@ jobs:
             --command-id "$COMMAND_ID" \
             --instance-id "$K3S_INSTANCE_ID" \
             --query 'StandardOutputContent' \
-            --output text | base64 -d > .generated/k3s/kubeconfig.yaml
+            --output text > .generated/k3s/kubeconfig.yaml
 
           if [[ ! -s .generated/k3s/kubeconfig.yaml ]]; then
             echo "ERROR: kubeconfig fetch returned empty file"
