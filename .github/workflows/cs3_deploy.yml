@@ -377,6 +377,51 @@ jobs:
             fi
           fi
 
+          # Detect existing VPC endpoints for SSM-related services and import them
+          # This prevents Terraform from attempting to create endpoints that already
+          # exist with different private-dns settings (causes CreateVpcEndpoint errors).
+          if [[ -n "$K3S_VPC_ID" && "$K3S_VPC_ID" != "None" ]]; then
+            echo "Checking for existing VPC endpoints in VPC $K3S_VPC_ID"
+            for svc in "com.amazonaws.${AWS_REGION}.ssm" "com.amazonaws.${AWS_REGION}.ssmmessages" "com.amazonaws.${AWS_REGION}.ec2messages"; do
+              ENDPT_ID=$(aws ec2 describe-vpc-endpoints --region "$AWS_REGION" --filters "Name=service-name,Values=$svc" "Name=vpc-id,Values=$K3S_VPC_ID" --query 'VpcEndpoints[0].VpcEndpointId' --output text 2>/dev/null || echo "")
+              if [[ -n "$ENDPT_ID" && "$ENDPT_ID" != "None" ]]; then
+                echo "Found existing endpoint $svc -> $ENDPT_ID; attempting import"
+                case "$svc" in
+                  *ssm)
+                    tf_import_if_needed "module.vpc.aws_vpc_endpoint.ssm[0]" "$ENDPT_ID" || tf_import_if_needed "module.vpc.aws_vpc_endpoint.ssm" "$ENDPT_ID"
+                    ;;
+                  *ssmmessages)
+                    tf_import_if_needed "module.vpc.aws_vpc_endpoint.ssmmessages[0]" "$ENDPT_ID" || tf_import_if_needed "module.vpc.aws_vpc_endpoint.ssmmessages" "$ENDPT_ID"
+                    ;;
+                  *ec2messages)
+                    tf_import_if_needed "module.vpc.aws_vpc_endpoint.ec2messages[0]" "$ENDPT_ID" || tf_import_if_needed "module.vpc.aws_vpc_endpoint.ec2messages" "$ENDPT_ID"
+                    ;;
+                esac
+              else
+                echo "No existing endpoint for $svc in VPC $K3S_VPC_ID"
+              fi
+            done
+          else
+            echo "K3S_VPC_ID unknown; skipping VPC endpoint import by VPC. Will try global lookup below."
+            for svc in "com.amazonaws.${AWS_REGION}.ssm" "com.amazonaws.${AWS_REGION}.ssmmessages" "com.amazonaws.${AWS_REGION}.ec2messages"; do
+              ENDPT_ID=$(aws ec2 describe-vpc-endpoints --region "$AWS_REGION" --filters "Name=service-name,Values=$svc" --query 'VpcEndpoints[0].VpcEndpointId' --output text 2>/dev/null || echo "")
+              if [[ -n "$ENDPT_ID" && "$ENDPT_ID" != "None" ]]; then
+                echo "Found existing endpoint $svc -> $ENDPT_ID (global) ; attempting import"
+                case "$svc" in
+                  *ssm)
+                    tf_import_if_needed "module.vpc.aws_vpc_endpoint.ssm[0]" "$ENDPT_ID" || tf_import_if_needed "module.vpc.aws_vpc_endpoint.ssm" "$ENDPT_ID"
+                    ;;
+                  *ssmmessages)
+                    tf_import_if_needed "module.vpc.aws_vpc_endpoint.ssmmessages[0]" "$ENDPT_ID" || tf_import_if_needed "module.vpc.aws_vpc_endpoint.ssmmessages" "$ENDPT_ID"
+                    ;;
+                  *ec2messages)
+                    tf_import_if_needed "module.vpc.aws_vpc_endpoint.ec2messages[0]" "$ENDPT_ID" || tf_import_if_needed "module.vpc.aws_vpc_endpoint.ec2messages" "$ENDPT_ID"
+                    ;;
+                esac
+              fi
+            done
+          fi
+
           # Cognito core resources
           COGNITO_USER_POOL_ID=$(aws cognito-idp list-user-pools --max-results 60 --region "$AWS_REGION" --query "UserPools[?Name=='$COGNITO_USER_POOL_NAME'].Id | [0]" --output text 2>/dev/null || echo "")
           if [[ -n "$COGNITO_USER_POOL_ID" && "$COGNITO_USER_POOL_ID" != "None" ]]; then
@@ -423,10 +468,36 @@ jobs:
           K3S_INSTANCE_ID=$(aws ec2 describe-instances --region "$AWS_REGION" --filters "Name=tag:Name,Values=$K3S_INSTANCE_NAME" "Name=instance-state-name,Values=pending,running,stopping,stopped" --query "Reservations[].Instances[].InstanceId | [0]" --output text 2>/dev/null || true)
           tf_import_if_needed "module.ec2_k3s.aws_instance.k3s" "$K3S_INSTANCE_ID"
 
+          # Try to find and import the VPC endpoint security group even if the k3s EC2 instance
+          # doesn't exist yet. We try multiple lookup strategies (group-name, tag:Name)
+          # and optionally constrain by VPC when we can discover it from the instance.
+          VPC_ENDPOINT_SG_ID=""
           if [[ -n "$K3S_INSTANCE_ID" && "$K3S_INSTANCE_ID" != "None" ]]; then
             K3S_VPC_ID=$(aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$K3S_INSTANCE_ID" --query 'Reservations[0].Instances[0].VpcId' --output text 2>/dev/null || echo "")
-            VPC_ENDPOINT_SG_ID=$(aws ec2 describe-security-groups --filters "Name=group-name,Values=$VPC_ENDPOINT_SG_NAME" "Name=vpc-id,Values=$K3S_VPC_ID" --region "$AWS_REGION" --query "SecurityGroups[0].GroupId" --output text 2>/dev/null || true)
-            tf_import_if_needed "module.vpc.aws_security_group.vpc_endpoints[0]" "$VPC_ENDPOINT_SG_ID"
+          else
+            K3S_VPC_ID=""
+          fi
+
+          if [[ -n "$K3S_VPC_ID" && "$K3S_VPC_ID" != "None" ]]; then
+            echo "Looking for endpoint SG by group-name within VPC $K3S_VPC_ID"
+            VPC_ENDPOINT_SG_ID=$(aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=group-name,Values=$VPC_ENDPOINT_SG_NAME" "Name=vpc-id,Values=$K3S_VPC_ID" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+          fi
+
+          if [[ -z "$VPC_ENDPOINT_SG_ID" || "$VPC_ENDPOINT_SG_ID" == "None" ]]; then
+            echo "Fallback: looking for endpoint SG by tag:Name across the VPCs"
+            VPC_ENDPOINT_SG_ID=$(aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=tag:Name,Values=$VPC_ENDPOINT_SG_NAME" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+          fi
+
+          if [[ -z "$VPC_ENDPOINT_SG_ID" || "$VPC_ENDPOINT_SG_ID" == "None" ]]; then
+            echo "Fallback: looking for endpoint SG by group-name across the VPCs"
+            VPC_ENDPOINT_SG_ID=$(aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=group-name,Values=$VPC_ENDPOINT_SG_NAME" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+          fi
+
+          if [[ -n "$VPC_ENDPOINT_SG_ID" && "$VPC_ENDPOINT_SG_ID" != "None" && "$VPC_ENDPOINT_SG_ID" != "" ]]; then
+            echo "Found VPC endpoint SG: $VPC_ENDPOINT_SG_ID (importing into module.vpc.aws_security_group.vpc_endpoints)"
+            tf_import_if_needed "module.vpc.aws_security_group.vpc_endpoints" "$VPC_ENDPOINT_SG_ID"
+          else
+            echo "No existing VPC endpoint SG found by name/tag; Terraform will create one if required."
           fi
 
           K3S_EIP_ALLOC_ID=$(aws ec2 describe-addresses --region "$AWS_REGION" --filters "Name=tag:Name,Values=$K3S_EIP_NAME" --query "Addresses[0].AllocationId" --output text 2>/dev/null || true)
