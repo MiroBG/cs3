@@ -441,17 +441,26 @@ jobs:
           mkdir -p .generated/k3s
           K3S_INSTANCE_ID=$(terraform output -raw ec2_instance_id)
 
+          echo "Waiting for EC2 instance to report running state"
+          aws ec2 wait instance-running --region "$AWS_REGION" --instance-ids "$K3S_INSTANCE_ID"
+
           echo "Waiting for SSM agent on $K3S_INSTANCE_ID"
-          for i in $(seq 1 60); do
+          for i in $(seq 1 120); do
             PING_STATUS=$(aws ssm describe-instance-information --region "$AWS_REGION" --filters "Key=InstanceIds,Values=$K3S_INSTANCE_ID" --query 'InstanceInformationList[0].PingStatus' --output text 2>/dev/null || true)
             if [[ "$PING_STATUS" == "Online" ]]; then
               break
+            fi
+            if [[ $((i % 6)) -eq 0 ]]; then
+              echo "Still waiting for SSM: attempt $i/120, status=${PING_STATUS:-Unknown}"
             fi
             sleep 10
           done
 
           if [[ "$PING_STATUS" != "Online" ]]; then
             echo "ERROR: SSM agent never came online for $K3S_INSTANCE_ID"
+            aws ec2 describe-instance-status --region "$AWS_REGION" --instance-ids "$K3S_INSTANCE_ID" --output table || true
+            aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$K3S_INSTANCE_ID" --query 'Reservations[0].Instances[0].[State.Name,PublicIpAddress,PrivateIpAddress]' --output table || true
+            aws ssm describe-instance-information --region "$AWS_REGION" --filters "Key=InstanceIds,Values=$K3S_INSTANCE_ID" --output table || true
             exit 1
           fi
 

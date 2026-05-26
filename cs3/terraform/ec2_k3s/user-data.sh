@@ -12,6 +12,21 @@ echo "Timestamp: $(date)"
 apt-get update
 apt-get upgrade -y
 
+echo "====== Installing SSM Agent ======"
+if ! command -v snap >/dev/null 2>&1; then
+  apt-get install -y snapd
+fi
+if command -v snap >/dev/null 2>&1; then
+  snap install amazon-ssm-agent --classic || true
+fi
+if systemctl list-unit-files | grep -q '^amazon-ssm-agent.service'; then
+  systemctl enable amazon-ssm-agent
+  systemctl start amazon-ssm-agent
+elif systemctl list-unit-files | grep -q '^snap.amazon-ssm-agent.amazon-ssm-agent.service'; then
+  systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
+  systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
+fi
+
 # Install dependencies
 apt-get install -y \
   curl \
@@ -33,21 +48,6 @@ echo "====== Installing k3s ======"
 PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
 export INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --tls-san $${PUBLIC_IP}"
 curl -sfL https://get.k3s.io | sh -
-
-echo "====== Installing SSM Agent ======"
-if ! command -v snap >/dev/null 2>&1; then
-  apt-get install -y snapd
-fi
-if command -v snap >/dev/null 2>&1; then
-  snap install amazon-ssm-agent --classic || true
-fi
-if systemctl list-unit-files | grep -q '^amazon-ssm-agent.service'; then
-  systemctl enable amazon-ssm-agent
-  systemctl start amazon-ssm-agent
-elif systemctl list-unit-files | grep -q '^snap.amazon-ssm-agent.amazon-ssm-agent.service'; then
-  systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
-  systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
-fi
 
 # Wait for k3s to be ready
 echo "Waiting for k3s to be ready..."
