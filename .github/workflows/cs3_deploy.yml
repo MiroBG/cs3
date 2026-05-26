@@ -460,7 +460,7 @@ jobs:
             --instance-ids "$K3S_INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --comment "Fetch k3s kubeconfig" \
-            --parameters 'commands=sudo cat /opt/k3s/kubeconfig.yaml' \
+            --parameters 'commands=sudo base64 -w 0 /opt/k3s/kubeconfig.yaml' \
             --query 'Command.CommandId' \
             --output text)
 
@@ -482,14 +482,36 @@ jobs:
             --command-id "$COMMAND_ID" \
             --instance-id "$K3S_INSTANCE_ID" \
             --query 'StandardOutputContent' \
-            --output text > .generated/k3s/kubeconfig.yaml
+            --output text | base64 -d > .generated/k3s/kubeconfig.yaml
 
           if [[ ! -s .generated/k3s/kubeconfig.yaml ]]; then
             echo "ERROR: kubeconfig fetch returned empty file"
             exit 1
           fi
 
+          if ! grep -q '^apiVersion: v1$' .generated/k3s/kubeconfig.yaml; then
+            echo "ERROR: fetched kubeconfig does not look valid"
+            sed -n '1,20p' .generated/k3s/kubeconfig.yaml
+            exit 1
+          fi
+
+          if ! grep -q '^clusters:$' .generated/k3s/kubeconfig.yaml; then
+            echo "ERROR: fetched kubeconfig is missing cluster definitions"
+            sed -n '1,30p' .generated/k3s/kubeconfig.yaml
+            exit 1
+          fi
+
           echo "Fetched kubeconfig to .generated/k3s/kubeconfig.yaml"
+          sed -n '1,12p' .generated/k3s/kubeconfig.yaml
+
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Verify kubeconfig is usable
+        run: |
+          set -euo pipefail
+          kubectl --kubeconfig .generated/k3s/kubeconfig.yaml version --client=true >/dev/null
+          kubectl --kubeconfig .generated/k3s/kubeconfig.yaml get nodes
 
       - name: Terraform apply logging stack
         env:
