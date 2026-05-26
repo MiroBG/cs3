@@ -2,8 +2,13 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: cs3-portal
+  namespace: cs3-prod
   labels:
     app: cs3-portal
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "5000"
+    prometheus.io/path: "/metrics"
 spec:
   replicas: 2
   selector:
@@ -13,13 +18,12 @@ spec:
     metadata:
       labels:
         app: cs3-portal
-        annotations:
-          prometheus.io/scrape: "true"
-          prometheus.io/port: "5000"
-          prometheus.io/path: "/metrics"
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "5000"
+        prometheus.io/path: "/metrics"
     spec:
-        namespace: cs3-prod
-        serviceAccountName: cs3-portal
+      serviceAccountName: cs3-portal
       containers:
       - name: portal
         image: PORTAL_ECR_IMAGE:latest
@@ -95,6 +99,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: portal-config
+  namespace: cs3-prod
 data:
   cognito-domain: "COGNITO_DOMAIN_VALUE"
   portal-url: "https://portal.innovatech.local"
@@ -103,6 +108,7 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: portal-secrets
+  namespace: cs3-prod
 type: Opaque
 stringData:
   flask-secret-key: "FLASK_SECRET_KEY_VALUE"

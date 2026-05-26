@@ -1,6 +1,6 @@
 output "instance_id" {
-  value       = data.aws_instance.k3s_target.id
-  description = "EC2 instance ID (existing or newly created)"
+  value       = aws_instance.k3s.id
+  description = "EC2 instance ID"
 }
 
 output "instance_public_ip" {
@@ -9,7 +9,7 @@ output "instance_public_ip" {
 }
 
 output "instance_private_ip" {
-  value       = data.aws_instance.k3s_target.private_ip
+  value       = aws_instance.k3s.private_ip
   description = "Private IP address"
 }
 
@@ -29,7 +29,7 @@ output "grafana_endpoint" {
 }
 
 output "postgresql_endpoint" {
-  value       = "${data.aws_instance.k3s_target.private_ip}:5432"
+  value       = "${aws_instance.k3s.private_ip}:5432"
   description = "PostgreSQL endpoint"
 }
 
