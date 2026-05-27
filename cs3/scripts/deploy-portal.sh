@@ -26,6 +26,8 @@ case "${COGNITO_DOMAIN,,}" in
 esac
 
 NAMESPACE="cs3-prod"
+AWS_REGION=${AWS_REGION:-eu-central-1}
+ECR_REGISTRY=${ECR_IMAGE%%/*}
 FLASK_SECRET_KEY=$(openssl rand -hex 32)
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 CS3_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
@@ -54,10 +56,36 @@ sed -i "s|PORTAL_DEMO_AUTH_VALUE|$(escape_sed_replacement "$PORTAL_DEMO_AUTH")|g
 echo "Applying Kubernetes manifests..."
 kubectl apply -f "$CS3_DIR/k8s/00-namespace.yaml"
 kubectl apply -f "$CS3_DIR/k8s/rbac/portal-role.yaml"
+
+echo "Creating ECR image pull secret..."
+ECR_PASSWORD=$(aws ecr get-login-password --region "$AWS_REGION")
+kubectl create secret docker-registry ecr-registry \
+    --namespace "$NAMESPACE" \
+    --docker-server="$ECR_REGISTRY" \
+    --docker-username=AWS \
+    --docker-password="$ECR_PASSWORD" \
+    --dry-run=client \
+    -o yaml \
+    | kubectl apply -f -
+unset ECR_PASSWORD
+
 kubectl apply -f "$RENDER_DIR/portal/"
 
 echo "Waiting for portal deployment to be ready..."
-kubectl rollout status deployment/cs3-portal -n $NAMESPACE --timeout=5m
+if ! kubectl rollout status deployment/cs3-portal -n "$NAMESPACE" --timeout=5m; then
+    echo "ERROR: portal deployment did not become ready"
+    echo "---- Pods ----"
+    kubectl get pods -n "$NAMESPACE" -o wide || true
+    echo "---- Deployment ----"
+    kubectl describe deployment cs3-portal -n "$NAMESPACE" || true
+    echo "---- Pod details ----"
+    kubectl describe pods -n "$NAMESPACE" -l app=cs3-portal || true
+    echo "---- Recent events ----"
+    kubectl get events -n "$NAMESPACE" --sort-by=.lastTimestamp | tail -80 || true
+    echo "---- Portal logs ----"
+    kubectl logs -n "$NAMESPACE" -l app=cs3-portal --tail=120 || true
+    exit 1
+fi
 
 echo "Portal service details:"
 kubectl get svc cs3-portal-svc -n $NAMESPACE

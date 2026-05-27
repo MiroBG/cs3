@@ -24,6 +24,8 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: cs3-portal
+      imagePullSecrets:
+      - name: ecr-registry
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
