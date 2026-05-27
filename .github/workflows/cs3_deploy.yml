@@ -99,7 +99,7 @@ jobs:
           echo "TF_VAR_resource_suffix=" >> "$GITHUB_ENV"
           echo "TF_VAR_use_default_vpc=true" >> "$GITHUB_ENV"
           echo "TF_VAR_create_k3s_instance=true" >> "$GITHUB_ENV"
-          echo "TF_VAR_ec2_instance_type=t2.micro" >> "$GITHUB_ENV"
+          echo "TF_VAR_ec2_instance_type=t2.small" >> "$GITHUB_ENV"
           echo "TF_VAR_manage_cognito_domain=false" >> "$GITHUB_ENV"
           echo "✓ Terraform variables set from secrets"
 
@@ -189,7 +189,7 @@ jobs:
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
           TF_VAR_create_k3s_instance: "true"
-          TF_VAR_ec2_instance_type: "t2.micro"
+          TF_VAR_ec2_instance_type: "t2.small"
           TF_VAR_manage_cognito_domain: "false"
         run: terraform plan -input=false -out=tfplan
 
@@ -261,7 +261,7 @@ jobs:
           echo "TF_VAR_resource_suffix=" >> "$GITHUB_ENV"
           echo "TF_VAR_use_default_vpc=true" >> "$GITHUB_ENV"
           echo "TF_VAR_create_k3s_instance=true" >> "$GITHUB_ENV"
-          echo "TF_VAR_ec2_instance_type=t2.micro" >> "$GITHUB_ENV"
+          echo "TF_VAR_ec2_instance_type=t2.small" >> "$GITHUB_ENV"
           echo "TF_VAR_manage_cognito_domain=false" >> "$GITHUB_ENV"
           echo "✓ Terraform variables set from secrets"
 
@@ -553,7 +553,7 @@ jobs:
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
           TF_VAR_create_k3s_instance: "true"
-          TF_VAR_ec2_instance_type: "t2.micro"
+          TF_VAR_ec2_instance_type: "t2.small"
           TF_VAR_manage_cognito_domain: "false"
           TF_VAR_enable_logging: "false"
         run: terraform plan -input=false -out=tfplan
@@ -565,7 +565,7 @@ jobs:
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
           TF_VAR_create_k3s_instance: "true"
-          TF_VAR_ec2_instance_type: "t2.micro"
+          TF_VAR_ec2_instance_type: "t2.small"
           TF_VAR_manage_cognito_domain: "false"
           TF_VAR_enable_logging: "false"
         run: terraform apply -auto-approve tfplan
@@ -577,6 +577,7 @@ jobs:
           set -euo pipefail
           mkdir -p .generated/k3s
           K3S_INSTANCE_ID=$(terraform output -raw ec2_instance_id)
+          KUBECONFIG_PARAMETER_NAME=$(terraform output -raw kubeconfig_parameter_name)
 
           echo "Waiting for EC2 instance to report running state"
           aws ec2 wait instance-running --region "$AWS_REGION" --instance-ids "$K3S_INSTANCE_ID"
@@ -601,55 +602,33 @@ jobs:
             exit 1
           fi
 
-          cat > /tmp/ssm-fetch-kubeconfig.json <<'EOF'
-          {
-            "commands": [
-              "for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18; do if [ -s /opt/k3s/kubeconfig.yaml ]; then sudo cat /opt/k3s/kubeconfig.yaml; exit 0; fi; echo 'Waiting for kubeconfig...' >&2; sleep 10; done; echo 'ERROR: kubeconfig not ready after 3m' >&2; exit 1"
-            ]
-          }
-          EOF
-
-          COMMAND_ID=$(aws ssm send-command \
-            --region "$AWS_REGION" \
-            --instance-ids "$K3S_INSTANCE_ID" \
-            --document-name "AWS-RunShellScript" \
-            --comment "Fetch k3s kubeconfig" \
-            --parameters file:///tmp/ssm-fetch-kubeconfig.json \
-            --query 'Command.CommandId' \
-            --output text)
-
-          echo "Waiting for SSM command $COMMAND_ID to complete (timeout: 10 minutes)"
+          echo "Waiting for kubeconfig parameter $KUBECONFIG_PARAMETER_NAME"
           for i in $(seq 1 120); do
-            STATUS=$(aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$COMMAND_ID" --instance-id "$K3S_INSTANCE_ID" --query 'Status' --output text 2>/dev/null || true)
-            if [[ "$STATUS" == "Success" ]]; then
-              echo "Command succeeded"
-              break
-            fi
-            if [[ "$STATUS" == "Failed" || "$STATUS" == "Cancelled" || "$STATUS" == "TimedOut" ]]; then
-              echo "ERROR: SSM command failed with status $STATUS"
-              aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$COMMAND_ID" --instance-id "$K3S_INSTANCE_ID" --output json || true
-              exit 1
+            if aws ssm get-parameter \
+              --region "$AWS_REGION" \
+              --name "$KUBECONFIG_PARAMETER_NAME" \
+              --query 'Parameter.Value' \
+              --output text > .generated/k3s/kubeconfig.yaml 2>/tmp/kubeconfig-parameter.err; then
+              if [[ -s .generated/k3s/kubeconfig.yaml ]]; then
+                echo "Fetched kubeconfig from Parameter Store"
+                break
+              fi
             fi
             if [[ $((i % 12)) -eq 0 ]]; then
-              echo "Still waiting... (attempt $i/120, status=$STATUS)"
+              echo "Still waiting for kubeconfig parameter... (attempt $i/120)"
+              cat /tmp/kubeconfig-parameter.err || true
             fi
             sleep 5
           done
 
-          aws ssm get-command-invocation \
-            --region "$AWS_REGION" \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$K3S_INSTANCE_ID" \
-            --query 'StandardOutputContent' \
-            --output text > .generated/k3s/kubeconfig.yaml
-
           if [[ ! -s .generated/k3s/kubeconfig.yaml ]]; then
-            echo "ERROR: kubeconfig fetch returned empty file"
-            echo "---- SSM command invocation (full) ----"
-            aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$COMMAND_ID" --instance-id "$K3S_INSTANCE_ID" --output json || true
-            echo "---- SSM StandardErrorContent ----"
-            aws ssm get-command-invocation --region "$AWS_REGION" --command-id "$COMMAND_ID" --instance-id "$K3S_INSTANCE_ID" --query 'StandardErrorContent' --output text || true
-            echo "---- End SSM diagnostics ----"
+            echo "ERROR: kubeconfig parameter was not published by the instance"
+            echo "---- EC2 status ----"
+            aws ec2 describe-instance-status --region "$AWS_REGION" --instance-ids "$K3S_INSTANCE_ID" --output table || true
+            echo "---- SSM managed instance status ----"
+            aws ssm describe-instance-information --region "$AWS_REGION" --filters "Key=InstanceIds,Values=$K3S_INSTANCE_ID" --output table || true
+            echo "---- Parameter lookup error ----"
+            cat /tmp/kubeconfig-parameter.err || true
             exit 1
           fi
 
@@ -685,7 +664,7 @@ jobs:
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
           TF_VAR_create_k3s_instance: "true"
-          TF_VAR_ec2_instance_type: "t2.micro"
+          TF_VAR_ec2_instance_type: "t2.small"
           TF_VAR_manage_cognito_domain: "false"
           TF_VAR_enable_logging: "true"
           TF_VAR_kubeconfig_path: ".generated/k3s/kubeconfig.yaml"

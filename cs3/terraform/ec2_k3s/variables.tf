@@ -54,6 +54,12 @@ variable "grafana_admin_password" {
   description = "Grafana admin password"
 }
 
+variable "kubeconfig_parameter_name" {
+  type        = string
+  default     = "/cs3/k3s/kubeconfig"
+  description = "SSM Parameter Store name where the EC2 bootstrap publishes kubeconfig"
+}
+
 variable "tags" {
   type        = map(string)
   default     = {}

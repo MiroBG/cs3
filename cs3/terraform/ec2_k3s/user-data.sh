@@ -85,6 +85,13 @@ apt-get install -y \
   jq \
   unzip
 
+apt-get install -y awscli || true
+if ! command -v aws >/dev/null 2>&1; then
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip
+  unzip -q /tmp/awscliv2.zip -d /tmp
+  /tmp/aws/install
+fi
+
 # Start Docker
 systemctl enable docker
 systemctl start docker
@@ -112,6 +119,26 @@ mkdir -p /opt/k3s
 cp /etc/rancher/k3s/k3s.yaml /opt/k3s/kubeconfig.yaml
 sed -i "s|https://127.0.0.1:6443|https://$${PUBLIC_IP}:6443|g" /opt/k3s/kubeconfig.yaml
 chmod 644 /opt/k3s/kubeconfig.yaml
+
+echo "====== Publishing kubeconfig to SSM Parameter Store ======"
+if command -v aws >/dev/null 2>&1 && [ -n "$AWS_REGION" ]; then
+  for i in 1 2 3 4 5 6; do
+    if aws ssm put-parameter \
+      --region "$${AWS_REGION}" \
+      --name "${kubeconfig_parameter}" \
+      --type "String" \
+      --value file:///opt/k3s/kubeconfig.yaml \
+      --tier "Advanced" \
+      --overwrite >/dev/null; then
+      echo "Published kubeconfig to ${kubeconfig_parameter}"
+      break
+    fi
+    echo "Retrying kubeconfig publish to Parameter Store ($i/6)..."
+    sleep 10
+  done
+else
+  echo "AWS CLI or AWS region missing; skipping kubeconfig Parameter Store publish"
+fi
 
 echo "====== Refreshing SSM Agent ======"
 if systemctl list-unit-files | grep -q '^amazon-ssm-agent.service'; then

@@ -105,6 +105,11 @@ output "kubeconfig_path" {
   description = "Local kubeconfig path used by kubernetes and helm providers"
 }
 
+output "kubeconfig_parameter_name" {
+  value       = module.ec2_k3s.kubeconfig_parameter_name
+  description = "SSM Parameter Store name where the EC2 instance publishes kubeconfig"
+}
+
 output "waf_web_acl_arn" {
   value       = module.waf.web_acl_arn
   description = "WAF Web ACL ARN for the portal"

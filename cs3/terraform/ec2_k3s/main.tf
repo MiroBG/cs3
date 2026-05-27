@@ -4,6 +4,9 @@ locals {
   })
 }
 
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+
 # Security group for EC2 instance
 resource "aws_security_group" "k3s" {
   name        = "${var.name_prefix}-k3s-sg${var.resource_suffix_part}"
@@ -113,6 +116,25 @@ resource "aws_iam_role_policy_attachment" "k3s_ssm" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
+resource "aws_iam_role_policy" "k3s_kubeconfig_parameter" {
+  name = "${var.name_prefix}-k3s-kubeconfig-parameter${var.resource_suffix_part}"
+  role = aws_iam_role.k3s.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:PutParameter",
+          "ssm:AddTagsToResource"
+        ]
+        Resource = "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter${var.kubeconfig_parameter_name}"
+      }
+    ]
+  })
+}
+
 # Instance profile
 resource "aws_iam_instance_profile" "k3s" {
   name = "${var.name_prefix}-k3s-profile${var.resource_suffix_part}"
@@ -125,6 +147,7 @@ locals {
     db_password            = var.db_password
     grafana_admin_password = var.grafana_admin_password
     eip_public_ip          = try(aws_eip.k3s[0].public_ip, "")
+    kubeconfig_parameter   = var.kubeconfig_parameter_name
   }))
   instance_name = "${var.name_prefix}-k3s${var.resource_suffix_part}"
 }
@@ -157,7 +180,8 @@ resource "aws_instance" "k3s" {
 
   depends_on = [
     aws_iam_instance_profile.k3s,
-    aws_iam_role_policy_attachment.k3s_ssm
+    aws_iam_role_policy_attachment.k3s_ssm,
+    aws_iam_role_policy.k3s_kubeconfig_parameter
   ]
 }
 

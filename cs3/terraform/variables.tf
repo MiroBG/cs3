@@ -57,7 +57,7 @@ variable "cluster_name" {
 
 variable "ec2_instance_type" {
   type        = string
-  default     = "t2.micro"
+  default     = "t2.small"
   description = "EC2 instance type for k3s deployment"
 }
 
@@ -131,6 +131,12 @@ variable "kubeconfig_path" {
   type        = string
   description = "Local kubeconfig path used by kubernetes and helm providers"
   default     = ".generated/k3s/kubeconfig.yaml"
+}
+
+variable "kubeconfig_parameter_name" {
+  type        = string
+  description = "SSM Parameter Store name where the k3s instance publishes kubeconfig"
+  default     = "/cs3/k3s/kubeconfig"
 }
 
 variable "enable_logging" {

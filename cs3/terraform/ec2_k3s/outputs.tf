@@ -37,3 +37,8 @@ output "kubeconfig_path" {
   value       = "/opt/k3s/kubeconfig.yaml"
   description = "Path to kubeconfig on the instance"
 }
+
+output "kubeconfig_parameter_name" {
+  value       = var.kubeconfig_parameter_name
+  description = "SSM Parameter Store name containing kubeconfig"
+}

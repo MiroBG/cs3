@@ -39,17 +39,18 @@ module "vpc" {
 module "ec2_k3s" {
   source = "./ec2_k3s"
 
-  name_prefix            = var.name_prefix
-  resource_suffix_part   = local.resource_suffix_part
-  instance_type          = var.ec2_instance_type
-  root_volume_size       = var.ec2_root_volume_size
-  vpc_id                 = module.vpc.vpc_id
-  subnet_id              = module.vpc.public_subnet_ids[0]
-  vpc_cidr               = var.vpc_cidr
-  db_password            = var.db_password
-  grafana_admin_password = var.grafana_admin_password
-  tags                   = var.tags
-  create_instance        = var.create_k3s_instance
+  name_prefix               = var.name_prefix
+  resource_suffix_part      = local.resource_suffix_part
+  instance_type             = var.ec2_instance_type
+  root_volume_size          = var.ec2_root_volume_size
+  vpc_id                    = module.vpc.vpc_id
+  subnet_id                 = module.vpc.public_subnet_ids[0]
+  vpc_cidr                  = var.vpc_cidr
+  db_password               = var.db_password
+  grafana_admin_password    = var.grafana_admin_password
+  kubeconfig_parameter_name = var.kubeconfig_parameter_name
+  tags                      = var.tags
+  create_instance           = var.create_k3s_instance
 }
 
 # Cognito Identity Pool for federated access
