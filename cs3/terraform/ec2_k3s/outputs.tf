@@ -1,16 +1,16 @@
 output "instance_id" {
-  value       = aws_instance.k3s.id
-  description = "EC2 instance ID"
+  value       = try(aws_instance.k3s[0].id, null)
+  description = "EC2 instance ID (null if instance not created)"
 }
 
 output "instance_public_ip" {
-  value       = aws_eip.k3s.public_ip
-  description = "Public Elastic IP address"
+  value       = try(aws_eip.k3s[0].public_ip, null)
+  description = "Public Elastic IP address (null if not created)"
 }
 
 output "instance_private_ip" {
-  value       = aws_instance.k3s.private_ip
-  description = "Private IP address"
+  value       = try(aws_instance.k3s[0].private_ip, null)
+  description = "Private IP address (null if instance not created)"
 }
 
 output "security_group_id" {
@@ -19,18 +19,18 @@ output "security_group_id" {
 }
 
 output "kubernetes_endpoint" {
-  value       = "https://${aws_eip.k3s.public_ip}:6443"
-  description = "k3s API endpoint"
+  value       = try("https://${aws_eip.k3s[0].public_ip}:6443", null)
+  description = "k3s API endpoint (null if not created)"
 }
 
 output "grafana_endpoint" {
-  value       = "http://${aws_eip.k3s.public_ip}:30100"
-  description = "Grafana URL"
+  value       = try("http://${aws_eip.k3s[0].public_ip}:30100", null)
+  description = "Grafana URL (null if not created)"
 }
 
 output "postgresql_endpoint" {
-  value       = "${aws_instance.k3s.private_ip}:5432"
-  description = "PostgreSQL endpoint"
+  value       = try("${aws_instance.k3s[0].private_ip}:5432", null)
+  description = "PostgreSQL endpoint (null if instance not created)"
 }
 
 output "kubeconfig_path" {

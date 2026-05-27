@@ -49,6 +49,7 @@ module "ec2_k3s" {
   db_password            = var.db_password
   grafana_admin_password = var.grafana_admin_password
   tags                   = var.tags
+  create_instance        = var.create_k3s_instance
 }
 
 # Cognito Identity Pool for federated access

@@ -57,8 +57,14 @@ variable "cluster_name" {
 
 variable "ec2_instance_type" {
   type        = string
-  default     = "t3.micro"
+  default     = "t2.micro"
   description = "EC2 instance type for k3s deployment"
+}
+
+variable "create_k3s_instance" {
+  type        = bool
+  default     = true
+  description = "Create the k3s EC2 instance"
 }
 
 variable "ec2_root_volume_size" {

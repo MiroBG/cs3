@@ -8,42 +8,69 @@ exec 2>&1
 echo "====== Starting k3s + PostgreSQL Setup ======"
 echo "Timestamp: $(date)"
 
-# Update system
+# Minimal bootstrap dependencies used before the full package install below.
 apt-get update
-apt-get upgrade -y
+DEBIAN_FRONTEND=noninteractive apt-get install -y curl ca-certificates
+
+get_metadata() {
+  local path="$1"
+  local token
+  token=$(curl -fsS -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" 2>/dev/null || true)
+  if [ -n "$token" ]; then
+    curl -fsS -H "X-aws-ec2-metadata-token: $token" "http://169.254.169.254/latest/$${path}"
+  else
+    curl -fsS "http://169.254.169.254/latest/$${path}"
+  fi
+}
+
+AWS_REGION=$(get_metadata dynamic/instance-identity/document | sed -n 's/.*"region"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+PUBLIC_IP="${eip_public_ip}"
+if [ -z "$PUBLIC_IP" ]; then
+  PUBLIC_IP=$(get_metadata meta-data/public-ipv4)
+fi
+
+# Update system
+DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
 
 echo "====== Installing SSM Agent ======"
-if ! command -v snap >/dev/null 2>&1; then
-  apt-get install -y snapd
-fi
-if command -v snap >/dev/null 2>&1; then
-  systemctl enable --now snapd.socket || true
-  snap wait system seed.loaded || true
-
+if [ -n "$AWS_REGION" ]; then
+  SSM_DEB="/tmp/amazon-ssm-agent.deb"
   for i in 1 2 3; do
-    if snap install amazon-ssm-agent --classic; then
-      break
+    if curl -fsSL "https://s3.$${AWS_REGION}.amazonaws.com/amazon-ssm-$${AWS_REGION}/latest/debian_amd64/amazon-ssm-agent.deb" -o "$SSM_DEB"; then
+      dpkg -i "$SSM_DEB" && break
     fi
-    echo "Retrying amazon-ssm-agent snap install ($i/3)..."
+    echo "Retrying amazon-ssm-agent deb install ($i/3)..."
     sleep 10
   done
+fi
 
-  if systemctl list-unit-files | grep -q '^amazon-ssm-agent.service'; then
-    systemctl enable amazon-ssm-agent
-    systemctl restart amazon-ssm-agent
-  elif systemctl list-unit-files | grep -q '^snap.amazon-ssm-agent.amazon-ssm-agent.service'; then
-    systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
-    systemctl restart snap.amazon-ssm-agent.amazon-ssm-agent.service
+if ! systemctl list-unit-files | grep -q '^amazon-ssm-agent.service'; then
+  echo "Falling back to Snap install for SSM agent"
+  apt-get install -y snapd
+  systemctl enable --now snapd.socket || true
+  snap wait system seed.loaded || true
+  snap install amazon-ssm-agent --classic || true
+fi
+
+if systemctl list-unit-files | grep -q '^amazon-ssm-agent.service'; then
+  systemctl enable --now amazon-ssm-agent
+elif systemctl list-unit-files | grep -q '^snap.amazon-ssm-agent.amazon-ssm-agent.service'; then
+  systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
+fi
+
+for i in 1 2 3 4 5 6; do
+  if systemctl is-active amazon-ssm-agent >/dev/null 2>&1 || systemctl is-active snap.amazon-ssm-agent.amazon-ssm-agent.service >/dev/null 2>&1; then
+    echo "SSM agent is active"
+    break
   fi
+  echo "Waiting for SSM agent service to become active ($i/6)..."
+  sleep 5
+done
 
-  for i in 1 2 3 4 5; do
-    if systemctl is-active amazon-ssm-agent >/dev/null 2>&1 || systemctl is-active snap.amazon-ssm-agent.amazon-ssm-agent.service >/dev/null 2>&1; then
-      echo "SSM agent is active"
-      break
-    fi
-    echo "Waiting for SSM agent service to become active ($i/5)..."
-    sleep 5
-  done
+if systemctl is-active amazon-ssm-agent >/dev/null 2>&1; then
+  amazon-ssm-agent -version || true
+elif systemctl is-active snap.amazon-ssm-agent.amazon-ssm-agent.service >/dev/null 2>&1; then
+  /snap/bin/amazon-ssm-agent -version || true
 fi
 
 # Install dependencies
@@ -64,7 +91,6 @@ systemctl start docker
 
 echo "====== Installing k3s ======"
 # Install k3s (lightweight Kubernetes)
-PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
 export INSTALL_K3S_EXEC="--write-kubeconfig-mode 644 --tls-san $${PUBLIC_IP}"
 curl -sfL https://get.k3s.io | sh -
 
@@ -156,8 +182,8 @@ echo "====== Setup Complete ======"
 echo "Timestamp: $(date)"
 echo ""
 echo "=== Access Information ==="
-echo "Public IP: $(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)"
+echo "Public IP: $${PUBLIC_IP}"
 echo "Kubeconfig: /opt/k3s/kubeconfig.yaml"
 echo "PostgreSQL: localhost:5432 (user: postgres, password in AWS Secrets Manager)"
-echo "Grafana: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):30100"
-echo "k3s API: https://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):6443"
+echo "Grafana: http://$${PUBLIC_IP}:30100"
+echo "k3s API: https://$${PUBLIC_IP}:6443"

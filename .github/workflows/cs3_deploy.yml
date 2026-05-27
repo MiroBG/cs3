@@ -98,6 +98,8 @@ jobs:
           fi
           echo "TF_VAR_resource_suffix=" >> "$GITHUB_ENV"
           echo "TF_VAR_use_default_vpc=true" >> "$GITHUB_ENV"
+          echo "TF_VAR_create_k3s_instance=true" >> "$GITHUB_ENV"
+          echo "TF_VAR_ec2_instance_type=t2.micro" >> "$GITHUB_ENV"
           echo "TF_VAR_manage_cognito_domain=false" >> "$GITHUB_ENV"
           echo "✓ Terraform variables set from secrets"
 
@@ -186,6 +188,8 @@ jobs:
           TF_VAR_db_password: "${{ secrets.CS3_DB_PASSWORD }}"
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
+          TF_VAR_create_k3s_instance: "true"
+          TF_VAR_ec2_instance_type: "t2.micro"
           TF_VAR_manage_cognito_domain: "false"
         run: terraform plan -input=false -out=tfplan
 
@@ -256,6 +260,8 @@ jobs:
           fi
           echo "TF_VAR_resource_suffix=" >> "$GITHUB_ENV"
           echo "TF_VAR_use_default_vpc=true" >> "$GITHUB_ENV"
+          echo "TF_VAR_create_k3s_instance=true" >> "$GITHUB_ENV"
+          echo "TF_VAR_ec2_instance_type=t2.micro" >> "$GITHUB_ENV"
           echo "TF_VAR_manage_cognito_domain=false" >> "$GITHUB_ENV"
           echo "✓ Terraform variables set from secrets"
 
@@ -281,6 +287,7 @@ jobs:
           K3S_PROFILE_NAME="${NAME_PREFIX}-k3s-profile${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           K3S_INSTANCE_NAME="${NAME_PREFIX}-k3s${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           K3S_EIP_NAME="${NAME_PREFIX}-k3s-eip${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          K3S_VPC_ID=""
           CLUSTER_NAME="${TF_VAR_cluster_name:-cs3-k3s-cluster}"
           PORTAL_LOG_GROUP_NAME="/aws/eks/${CLUSTER_NAME}${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}/portal"
 
@@ -374,6 +381,10 @@ jobs:
             K3S_EIP_ALLOC_ID=$(aws ec2 describe-addresses --region "$AWS_REGION" --filters "Name=tag:Name,Values=$K3S_EIP_NAME" --query 'Addresses[0].AllocationId' --output text 2>/dev/null || echo "")
             if [[ -n "$K3S_EIP_ALLOC_ID" && "$K3S_EIP_ALLOC_ID" != "None" ]]; then
               tf_import_if_needed "module.ec2_k3s.aws_eip.k3s" "$K3S_EIP_ALLOC_ID"
+              K3S_EIP_ASSOC_ID=$(aws ec2 describe-addresses --region "$AWS_REGION" --allocation-ids "$K3S_EIP_ALLOC_ID" --query 'Addresses[0].AssociationId' --output text 2>/dev/null || echo "")
+              if [[ -n "$K3S_EIP_ASSOC_ID" && "$K3S_EIP_ASSOC_ID" != "None" ]]; then
+                tf_import_if_needed "module.ec2_k3s.aws_eip_association.k3s" "$K3S_EIP_ASSOC_ID"
+              fi
             fi
           fi
 
@@ -510,6 +521,10 @@ jobs:
 
           K3S_EIP_ALLOC_ID=$(aws ec2 describe-addresses --region "$AWS_REGION" --filters "Name=tag:Name,Values=$K3S_EIP_NAME" --query "Addresses[0].AllocationId" --output text 2>/dev/null || true)
           tf_import_if_needed "module.ec2_k3s.aws_eip.k3s" "$K3S_EIP_ALLOC_ID"
+          if [[ -n "$K3S_EIP_ALLOC_ID" && "$K3S_EIP_ALLOC_ID" != "None" ]]; then
+            K3S_EIP_ASSOC_ID=$(aws ec2 describe-addresses --region "$AWS_REGION" --allocation-ids "$K3S_EIP_ALLOC_ID" --query "Addresses[0].AssociationId" --output text 2>/dev/null || true)
+            tf_import_if_needed "module.ec2_k3s.aws_eip_association.k3s" "$K3S_EIP_ASSOC_ID"
+          fi
 
           # WAF (only if exists)
           WAF_ID=$(aws wafv2 list-web-acls --scope REGIONAL --region "$AWS_REGION" --query "WebACLs[?Name=='$WAF_NAME'].Id | [0]" --output text 2>/dev/null || echo "")
@@ -537,6 +552,8 @@ jobs:
           TF_VAR_db_password: "${{ secrets.CS3_DB_PASSWORD }}"
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
+          TF_VAR_create_k3s_instance: "true"
+          TF_VAR_ec2_instance_type: "t2.micro"
           TF_VAR_manage_cognito_domain: "false"
           TF_VAR_enable_logging: "false"
         run: terraform plan -input=false -out=tfplan
@@ -547,6 +564,8 @@ jobs:
           TF_VAR_db_password: "${{ secrets.CS3_DB_PASSWORD }}"
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
+          TF_VAR_create_k3s_instance: "true"
+          TF_VAR_ec2_instance_type: "t2.micro"
           TF_VAR_manage_cognito_domain: "false"
           TF_VAR_enable_logging: "false"
         run: terraform apply -auto-approve tfplan
@@ -665,6 +684,8 @@ jobs:
           TF_VAR_db_password: "${{ secrets.CS3_DB_PASSWORD }}"
           TF_VAR_grafana_admin_password: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
           TF_VAR_use_default_vpc: "true"
+          TF_VAR_create_k3s_instance: "true"
+          TF_VAR_ec2_instance_type: "t2.micro"
           TF_VAR_manage_cognito_domain: "false"
           TF_VAR_enable_logging: "true"
           TF_VAR_kubeconfig_path: ".generated/k3s/kubeconfig.yaml"

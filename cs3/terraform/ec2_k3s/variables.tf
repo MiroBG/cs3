@@ -15,6 +15,12 @@ variable "instance_type" {
   description = "EC2 instance type"
 }
 
+variable "create_instance" {
+  type        = bool
+  default     = true
+  description = "Whether to create the EC2 instance (set false to skip when quotas are low)"
+}
+
 variable "root_volume_size" {
   type        = number
   default     = 30

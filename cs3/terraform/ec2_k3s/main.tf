@@ -124,12 +124,14 @@ locals {
   user_data = base64encode(templatefile("${path.module}/user-data.sh", {
     db_password            = var.db_password
     grafana_admin_password = var.grafana_admin_password
+    eip_public_ip          = try(aws_eip.k3s[0].public_ip, "")
   }))
   instance_name = "${var.name_prefix}-k3s${var.resource_suffix_part}"
 }
 
 # EC2 Instance
 resource "aws_instance" "k3s" {
+  count                  = var.create_instance ? 1 : 0
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   subnet_id              = var.subnet_id
@@ -137,7 +139,7 @@ resource "aws_instance" "k3s" {
   iam_instance_profile   = aws_iam_instance_profile.k3s.name
 
   user_data                   = local.user_data
-  user_data_replace_on_change = false
+  user_data_replace_on_change = true
 
   root_block_device {
     volume_type           = "gp3"
@@ -153,17 +155,24 @@ resource "aws_instance" "k3s" {
     Name = local.instance_name
   })
 
-  depends_on = [aws_iam_instance_profile.k3s]
+  depends_on = [
+    aws_iam_instance_profile.k3s,
+    aws_iam_role_policy_attachment.k3s_ssm
+  ]
 }
 
 # Elastic IP for stable access
 resource "aws_eip" "k3s" {
-  instance   = aws_instance.k3s.id
-  domain     = "vpc"
-  depends_on = [aws_instance.k3s]
+  count  = var.create_instance ? 1 : 0
+  domain = "vpc"
 
   tags = merge(local.common_tags, {
     Name = "${var.name_prefix}-k3s-eip${var.resource_suffix_part}"
   })
 }
 
+resource "aws_eip_association" "k3s" {
+  count         = var.create_instance ? 1 : 0
+  allocation_id = aws_eip.k3s[0].id
+  instance_id   = aws_instance.k3s[0].id
+}
