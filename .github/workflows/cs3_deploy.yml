@@ -664,6 +664,9 @@ jobs:
       - name: Setup kubectl
         uses: azure/setup-kubectl@v4
 
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
       - name: Verify kubeconfig is usable
         run: |
           set -euo pipefail
@@ -729,6 +732,55 @@ jobs:
           TF_VAR_enable_logging: "true"
           TF_VAR_kubeconfig_path: ".generated/k3s/kubeconfig.yaml"
         run: terraform apply -auto-approve
+
+      - name: Build and push portal image
+        working-directory: cs3
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          IMAGE_TAG="${GITHUB_SHA::12}"
+          ECR_REPO="$(terraform -chdir=terraform output -raw ecr_repository_url)"
+          ECR_REGISTRY="${ECR_REPO%/*}"
+
+          aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_REGISTRY"
+          docker build -t "cs3-portal:${IMAGE_TAG}" portal
+          docker tag "cs3-portal:${IMAGE_TAG}" "${ECR_REPO}:${IMAGE_TAG}"
+          docker tag "cs3-portal:${IMAGE_TAG}" "${ECR_REPO}:latest"
+          docker push "${ECR_REPO}:${IMAGE_TAG}"
+          docker push "${ECR_REPO}:latest"
+
+          echo "PORTAL_IMAGE=${ECR_REPO}:${IMAGE_TAG}" >> "$GITHUB_ENV"
+
+      - name: Deploy portal to k3s
+        working-directory: cs3
+        env:
+          DB_PASSWORD: "${{ secrets.CS3_DB_PASSWORD }}"
+        run: |
+          set -euo pipefail
+          export KUBECONFIG="$GITHUB_WORKSPACE/cs3/terraform/.generated/k3s/kubeconfig.yaml"
+
+          CLIENT_ID="$(terraform -chdir=terraform output -raw cognito_client_id)"
+          CLIENT_SECRET="$(terraform -chdir=terraform output -raw cognito_client_secret)"
+          COGNITO_DOMAIN="$(terraform -chdir=terraform output -raw cognito_domain 2>/dev/null || true)"
+          DB_HOST="$(terraform -chdir=terraform output -raw ec2_instance_private_ip)"
+          PORTAL_IP="$(terraform -chdir=terraform output -raw ec2_instance_public_ip)"
+
+          if [[ -z "$COGNITO_DOMAIN" || "$COGNITO_DOMAIN" == "null" ]]; then
+            COGNITO_DOMAIN="disabled"
+          fi
+
+          ./scripts/deploy-portal.sh \
+            "$PORTAL_IMAGE" \
+            "$CLIENT_ID" \
+            "$CLIENT_SECRET" \
+            "$COGNITO_DOMAIN" \
+            "$DB_HOST" \
+            "$DB_PASSWORD" \
+            "http://${PORTAL_IP}"
+
+          kubectl get pods,svc,ingress -n cs3-prod
+          curl -fsS "http://${PORTAL_IP}/api/health"
 
       - name: Output Terraform values
         run: |

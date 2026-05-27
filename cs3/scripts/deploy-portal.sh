@@ -4,8 +4,8 @@
 set -e
 
 if [ $# -lt 6 ]; then
-    echo "Usage: $0 <ECR_IMAGE_URL> <COGNITO_CLIENT_ID> <COGNITO_CLIENT_SECRET> <COGNITO_DOMAIN> <DB_HOST> <DB_PASSWORD>"
-    echo "Example: $0 123456789012.dkr.ecr.eu-central-1.amazonaws.com/cs3-portal:latest client-id-xxx secret-xxx cs3-employees cs3-db.example.internal db-password"
+    echo "Usage: $0 <ECR_IMAGE_URL> <COGNITO_CLIENT_ID> <COGNITO_CLIENT_SECRET> <COGNITO_DOMAIN> <DB_HOST> <DB_PASSWORD> [PORTAL_URL]"
+    echo "Example: $0 123456789012.dkr.ecr.eu-central-1.amazonaws.com/cs3-portal:latest client-id-xxx secret-xxx cs3-employees cs3-db.example.internal db-password http://203.0.113.10"
     exit 1
 fi
 
@@ -15,6 +15,15 @@ COGNITO_CLIENT_SECRET=$3
 COGNITO_DOMAIN=$4
 DB_HOST=$5
 DB_PASSWORD=$6
+PORTAL_URL=${7:-http://localhost}
+PORTAL_DEMO_AUTH="false"
+
+case "${COGNITO_DOMAIN,,}" in
+    ""|"disabled"|"none"|"local")
+        COGNITO_DOMAIN="disabled"
+        PORTAL_DEMO_AUTH="true"
+        ;;
+esac
 
 NAMESPACE="cs3-prod"
 FLASK_SECRET_KEY=$(openssl rand -hex 32)
@@ -39,9 +48,12 @@ sed -i "s|COGNITO_CLIENT_ID_VALUE|$(escape_sed_replacement "$COGNITO_CLIENT_ID")
 sed -i "s|COGNITO_CLIENT_SECRET_VALUE|$(escape_sed_replacement "$COGNITO_CLIENT_SECRET")|g" "$RENDER_DIR/portal/deployment.yaml"
 sed -i "s|DB_HOST_VALUE|$(escape_sed_replacement "$DB_HOST")|g" "$RENDER_DIR/portal/deployment.yaml"
 sed -i "s|DB_PASSWORD_VALUE|$(escape_sed_replacement "$DB_PASSWORD")|g" "$RENDER_DIR/portal/deployment.yaml"
+sed -i "s|PORTAL_URL_VALUE|$(escape_sed_replacement "$PORTAL_URL")|g" "$RENDER_DIR/portal/deployment.yaml"
+sed -i "s|PORTAL_DEMO_AUTH_VALUE|$(escape_sed_replacement "$PORTAL_DEMO_AUTH")|g" "$RENDER_DIR/portal/deployment.yaml"
 
 echo "Applying Kubernetes manifests..."
-kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+kubectl apply -f "$CS3_DIR/k8s/00-namespace.yaml"
+kubectl apply -f "$CS3_DIR/k8s/rbac/portal-role.yaml"
 kubectl apply -f "$RENDER_DIR/portal/"
 
 echo "Waiting for portal deployment to be ready..."

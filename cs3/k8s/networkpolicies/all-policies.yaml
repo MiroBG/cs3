@@ -20,12 +20,29 @@ spec:
       app: cs3-portal
   policyTypes:
   - Ingress
+  - Egress
   ingress:
   - from:
     - namespaceSelector: {}
     ports:
     - protocol: TCP
       port: 5000
+  egress:
+  - to:
+    - ipBlock:
+        cidr: 10.0.0.0/8
+    - ipBlock:
+        cidr: 172.16.0.0/12
+    ports:
+    - protocol: TCP
+      port: 5432
+  - to:
+    - namespaceSelector: {}
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

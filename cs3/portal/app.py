@@ -12,11 +12,10 @@ import logging
 from datetime import datetime
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
-import boto3
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import requests
-from urllib.parse import urlencode, quote
+from urllib.parse import urlencode
 
 # Logging configuration
 logging.basicConfig(
@@ -35,6 +34,7 @@ COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID", "")
 COGNITO_CLIENT_SECRET = os.getenv("COGNITO_CLIENT_SECRET", "")
 COGNITO_REGION = os.getenv("AWS_REGION", "eu-central-1")
 PORTAL_URL = os.getenv("PORTAL_URL", "http://localhost:3000")
+DEMO_AUTH_ENABLED = os.getenv("PORTAL_DEMO_AUTH", "false").lower() == "true"
 
 # Database configuration
 DB_HOST = os.getenv("DB_HOST", "localhost")
@@ -57,6 +57,29 @@ def get_db_connection():
     except psycopg2.Error as e:
         logger.error(f"Database connection error: {e}")
         return None
+
+
+def cognito_configured():
+    """Return true when Cognito hosted UI can be used."""
+    return all(
+        [
+            COGNITO_CLIENT_ID,
+            COGNITO_CLIENT_SECRET,
+            COGNITO_DOMAIN,
+            COGNITO_DOMAIN.lower() not in {"disabled", "none", "local"},
+        ]
+    )
+
+
+def start_demo_session():
+    """Create a demo session for local/k3s runs without a Cognito domain."""
+    session["user"] = {
+        "email": "john.doe@innovatech.local",
+        "name": "John Doe",
+        "sub": "demo-user",
+    }
+    logger.info("Demo portal session started")
+    return redirect(url_for("dashboard"))
 
 
 def cognito_login_required(f):
@@ -82,6 +105,19 @@ def index():
 @app.route("/login")
 def login():
     """Cognito login redirect."""
+    if not cognito_configured():
+        if DEMO_AUTH_ENABLED:
+            return start_demo_session()
+        return (
+            jsonify(
+                {
+                    "error": "Cognito hosted UI is not configured",
+                    "hint": "Set COGNITO_DOMAIN or enable PORTAL_DEMO_AUTH for the k3s demo.",
+                }
+            ),
+            503,
+        )
+
     params = {
         "client_id": COGNITO_CLIENT_ID,
         "response_type": "code",
@@ -142,6 +178,9 @@ def callback():
 def logout():
     """Logout and clear session."""
     session.clear()
+    if not cognito_configured():
+        return redirect(url_for("login"))
+
     logout_url = f"https://{COGNITO_DOMAIN}.auth.{COGNITO_REGION}.amazoncognito.com/logout"
     params = {"client_id": COGNITO_CLIENT_ID, "logout_uri": PORTAL_URL}
     return redirect(f"{logout_url}?{urlencode(params)}")
@@ -256,9 +295,32 @@ def health():
         if conn:
             conn.close()
             return jsonify({"status": "healthy"}), 200
+        return jsonify({"status": "unhealthy", "error": "database connection failed"}), 500
     except Exception as e:
         logger.error(f"Health check failed: {e}")
         return jsonify({"status": "unhealthy", "error": str(e)}), 500
+
+
+@app.route("/metrics")
+def metrics():
+    """Minimal Prometheus metrics endpoint."""
+    conn = get_db_connection()
+    db_up = 1 if conn else 0
+    if conn:
+        conn.close()
+
+    body = "\n".join(
+        [
+            "# HELP cs3_portal_info CS3 portal application info",
+            "# TYPE cs3_portal_info gauge",
+            'cs3_portal_info{app="cs3-portal"} 1',
+            "# HELP cs3_portal_database_up Database connectivity status",
+            "# TYPE cs3_portal_database_up gauge",
+            f"cs3_portal_database_up {db_up}",
+            "",
+        ]
+    )
+    return app.response_class(body, mimetype="text/plain")
 
 
 @app.errorhandler(404)

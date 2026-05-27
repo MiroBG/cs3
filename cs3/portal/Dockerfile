@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
 WORKDIR /app
 
 # Install dependencies
@@ -11,6 +14,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py .
 COPY templates/ templates/
+
+RUN useradd --create-home --uid 1000 appuser && chown -R appuser:appuser /app
+USER appuser
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

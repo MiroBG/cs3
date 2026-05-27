@@ -4,17 +4,11 @@ metadata:
   name: cs3-portal-ingress
   namespace: cs3-prod
   annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    traefik.ingress.kubernetes.io/router.entrypoints: web
 spec:
-  ingressClassName: nginx
-  tls:
-  - hosts:
-    - portal.innovatech.local
-    secretName: portal-tls
+  ingressClassName: traefik
   rules:
-  - host: portal.innovatech.local
-    http:
+  - http:
       paths:
       - path: /
         pathType: Prefix

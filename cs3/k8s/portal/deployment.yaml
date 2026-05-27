@@ -10,7 +10,7 @@ metadata:
     prometheus.io/port: "5000"
     prometheus.io/path: "/metrics"
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: cs3-portal
@@ -24,10 +24,22 @@ spec:
         prometheus.io/path: "/metrics"
     spec:
       serviceAccountName: cs3-portal
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: portal
-        image: PORTAL_ECR_IMAGE:latest
+        image: PORTAL_ECR_IMAGE
         imagePullPolicy: Always
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop:
+            - ALL
         ports:
         - containerPort: 5000
           name: http
@@ -73,6 +85,11 @@ spec:
             configMapKeyRef:
               name: portal-config
               key: portal-url
+        - name: PORTAL_DEMO_AUTH
+          valueFrom:
+            configMapKeyRef:
+              name: portal-config
+              key: portal-demo-auth
         - name: AWS_REGION
           value: eu-central-1
         resources:
@@ -102,7 +119,8 @@ metadata:
   namespace: cs3-prod
 data:
   cognito-domain: "COGNITO_DOMAIN_VALUE"
-  portal-url: "https://portal.innovatech.local"
+  portal-url: "PORTAL_URL_VALUE"
+  portal-demo-auth: "PORTAL_DEMO_AUTH_VALUE"
 ---
 apiVersion: v1
 kind: Secret

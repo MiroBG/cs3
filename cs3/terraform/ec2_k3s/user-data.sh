@@ -158,9 +158,68 @@ CREATE DATABASE employees;
 GRANT ALL PRIVILEGES ON DATABASE employees TO postgres;
 EOF
 
+echo "====== Initializing Employee Database Schema ======"
+sudo -u postgres psql -d employees <<'EOF'
+CREATE TABLE IF NOT EXISTS employees (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    name VARCHAR(255) NOT NULL,
+    department VARCHAR(255),
+    status VARCHAR(50) NOT NULL DEFAULT 'active',
+    role VARCHAR(50) NOT NULL DEFAULT 'employee',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    offboarded_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_email ON employees(email);
+CREATE INDEX IF NOT EXISTS idx_status ON employees(status);
+CREATE INDEX IF NOT EXISTS idx_department ON employees(department);
+
+CREATE TABLE IF NOT EXISTS employee_audit_log (
+    id SERIAL PRIMARY KEY,
+    employee_id INTEGER NOT NULL REFERENCES employees(id) ON DELETE CASCADE,
+    action VARCHAR(50) NOT NULL,
+    old_status VARCHAR(50),
+    new_status VARCHAR(50),
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    performed_by VARCHAR(255)
+);
+
+CREATE INDEX IF NOT EXISTS idx_employee_audit ON employee_audit_log(employee_id);
+CREATE INDEX IF NOT EXISTS idx_audit_timestamp ON employee_audit_log(timestamp);
+
+CREATE TABLE IF NOT EXISTS employee_requests (
+    id SERIAL PRIMARY KEY,
+    email VARCHAR(255) NOT NULL REFERENCES employees(email) ON DELETE CASCADE,
+    request_type VARCHAR(50) NOT NULL,
+    description TEXT NOT NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    resolved_at TIMESTAMP,
+    resolved_by VARCHAR(255)
+);
+
+CREATE INDEX IF NOT EXISTS idx_request_email ON employee_requests(email);
+CREATE INDEX IF NOT EXISTS idx_request_status ON employee_requests(status);
+CREATE INDEX IF NOT EXISTS idx_request_created ON employee_requests(created_at);
+
+INSERT INTO employees (email, name, department, status, role)
+VALUES
+    ('admin@innovatech.local', 'System Admin', 'IT', 'active', 'admin'),
+    ('hr@innovatech.local', 'HR Manager', 'HR', 'active', 'hr'),
+    ('john.doe@innovatech.local', 'John Doe', 'Engineering', 'pending', 'employee'),
+    ('jane.smith@innovatech.local', 'Jane Smith', 'Operations', 'active', 'employee')
+ON CONFLICT (email) DO NOTHING;
+EOF
+
 # Configure PostgreSQL to accept connections from localhost
 echo "host    all             all             127.0.0.1/32            scram-sha-256" >> /etc/postgresql/16/main/pg_hba.conf
 echo "host    all             all             ::1/128                 scram-sha-256" >> /etc/postgresql/16/main/pg_hba.conf
+echo "host    all             all             10.0.0.0/8              scram-sha-256" >> /etc/postgresql/16/main/pg_hba.conf
+echo "host    all             all             172.16.0.0/12           scram-sha-256" >> /etc/postgresql/16/main/pg_hba.conf
+echo "host    all             all             192.168.0.0/16          scram-sha-256" >> /etc/postgresql/16/main/pg_hba.conf
 echo "listen_addresses = '*'" >> /etc/postgresql/16/main/postgresql.conf
 
 # Restart PostgreSQL

@@ -31,6 +31,12 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v4
+
       - name: Validate required secrets
         run: |
           test -n "${{ secrets.AWS_ROLE_TO_ASSUME || vars.AWS_ROLE_TO_ASSUME }}" || (echo "Missing AWS_ROLE_TO_ASSUME" && exit 1)
@@ -71,23 +77,118 @@ jobs:
           if [[ -n "$GRAFANA_PASSWORD" ]]; then
             echo "TF_VAR_grafana_admin_password=$GRAFANA_PASSWORD" >> "$GITHUB_ENV"
           fi
-          echo "TF_VAR_enable_logging=false" >> "$GITHUB_ENV"
+          echo "TF_VAR_resource_suffix=" >> "$GITHUB_ENV"
+          echo "TF_VAR_use_default_vpc=true" >> "$GITHUB_ENV"
+          echo "TF_VAR_create_k3s_instance=true" >> "$GITHUB_ENV"
+          echo "TF_VAR_ec2_instance_type=t2.small" >> "$GITHUB_ENV"
+          echo "TF_VAR_manage_cognito_domain=false" >> "$GITHUB_ENV"
 
-      - name: Remove Helm releases from logging namespace (if reachable)
+      - name: Fetch k3s kubeconfig for cluster cleanup
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p .generated/k3s
+
+          KUBECONFIG_PARAMETER_NAME=$(terraform output -raw kubeconfig_parameter_name 2>/dev/null || echo "/cs3/k3s/kubeconfig")
+          if aws ssm get-parameter \
+            --region "${{ env.AWS_REGION }}" \
+            --name "$KUBECONFIG_PARAMETER_NAME" \
+            --query 'Parameter.Value' \
+            --output text > .generated/k3s/kubeconfig.yaml 2>/tmp/destroy-kubeconfig.err; then
+            if [[ -s .generated/k3s/kubeconfig.yaml ]]; then
+              echo "TF_VAR_enable_logging=true" >> "$GITHUB_ENV"
+              echo "TF_VAR_kubeconfig_path=.generated/k3s/kubeconfig.yaml" >> "$GITHUB_ENV"
+              echo "Fetched kubeconfig from $KUBECONFIG_PARAMETER_NAME"
+            else
+              echo "Fetched kubeconfig file is empty; disabling Terraform logging provider cleanup."
+              echo "TF_VAR_enable_logging=false" >> "$GITHUB_ENV"
+            fi
+          else
+            echo "Could not fetch kubeconfig parameter; disabling Terraform logging provider cleanup."
+            cat /tmp/destroy-kubeconfig.err || true
+            echo "TF_VAR_enable_logging=false" >> "$GITHUB_ENV"
+          fi
+
+      - name: Import existing logging resources before destroy
         continue-on-error: true
         run: |
           set +e
-          # Try to retrieve kubeconfig from EC2 if logging was enabled
-          if [[ -d ".generated/k3s" && -f ".generated/k3s/kubeconfig.yaml" ]]; then
-            export KUBECONFIG=".generated/k3s/kubeconfig.yaml"
-            helm list --namespace logging && helm delete -n logging loki 2>/dev/null || true
-            helm list --namespace monitoring && helm delete -n monitoring prometheus 2>/dev/null || true
+          if [[ -s ".generated/k3s/kubeconfig.yaml" ]]; then
+            KUBECONFIG_FILE=".generated/k3s/kubeconfig.yaml"
+            LOGGING_NAMESPACE="logging"
+
+            import_if_missing() {
+              local address="$1"
+              local import_id="$2"
+              if terraform state show "$address" >/dev/null 2>&1; then
+                return 0
+              fi
+              terraform import -input=false "$address" "$import_id" || true
+            }
+
+            if kubectl --kubeconfig "$KUBECONFIG_FILE" get namespace "$LOGGING_NAMESPACE" >/dev/null 2>&1; then
+              import_if_missing 'module.logging[0].kubernetes_namespace.logging' "$LOGGING_NAMESPACE"
+            fi
+            if kubectl --kubeconfig "$KUBECONFIG_FILE" -n "$LOGGING_NAMESPACE" get configmap fluent-bit-config >/dev/null 2>&1; then
+              import_if_missing 'module.logging[0].kubernetes_config_map.fluent_bit_config' "$LOGGING_NAMESPACE/fluent-bit-config"
+            fi
+            if helm --kubeconfig "$KUBECONFIG_FILE" -n "$LOGGING_NAMESPACE" status loki >/dev/null 2>&1; then
+              import_if_missing 'module.logging[0].helm_release.loki' "$LOGGING_NAMESPACE/loki"
+            fi
+
+            echo "Removing non-Terraform cluster resources if present"
+            helm --kubeconfig "$KUBECONFIG_FILE" -n monitoring uninstall prometheus 2>/dev/null || true
+            kubectl --kubeconfig "$KUBECONFIG_FILE" delete namespace monitoring portal cs3-prod --ignore-not-found=true --timeout=90s || true
+          else
+            echo "No kubeconfig available; skipping cluster-level cleanup."
           fi
           set -e
 
       - name: Terraform destroy (CS3)
         run: terraform destroy -auto-approve
-        continue-on-error: true
+
+      - name: Cleanup CS3 leftovers after destroy
+        if: always()
+        run: |
+          set +e
+          REGION="${{ env.AWS_REGION }}"
+          NAME_PREFIX="${TF_VAR_name_prefix:-cs3}"
+          KUBECONFIG_PARAMETER_NAME="${TF_VAR_kubeconfig_parameter_name:-/cs3/k3s/kubeconfig}"
+
+          echo "Deleting kubeconfig SSM parameter"
+          aws ssm delete-parameter --region "$REGION" --name "$KUBECONFIG_PARAMETER_NAME" 2>/dev/null || true
+
+          echo "Deleting leftover CS3 EC2 instances"
+          INSTANCE_IDS=$(aws ec2 describe-instances --region "$REGION" \
+            --filters "Name=tag:Name,Values=${NAME_PREFIX}-k3s*" "Name=instance-state-name,Values=pending,running,stopping,stopped" \
+            --query 'Reservations[].Instances[].InstanceId' --output text 2>/dev/null || true)
+          if [[ -n "$INSTANCE_IDS" && "$INSTANCE_IDS" != "None" ]]; then
+            aws ec2 terminate-instances --region "$REGION" --instance-ids $INSTANCE_IDS || true
+            aws ec2 wait instance-terminated --region "$REGION" --instance-ids $INSTANCE_IDS || true
+          fi
+
+          echo "Releasing leftover CS3 Elastic IPs"
+          for alloc_id in $(aws ec2 describe-addresses --region "$REGION" --filters "Name=tag:Name,Values=${NAME_PREFIX}-k3s-eip*" --query 'Addresses[].AllocationId' --output text 2>/dev/null); do
+            assoc_id=$(aws ec2 describe-addresses --region "$REGION" --allocation-ids "$alloc_id" --query 'Addresses[0].AssociationId' --output text 2>/dev/null || true)
+            if [[ -n "$assoc_id" && "$assoc_id" != "None" ]]; then
+              aws ec2 disassociate-address --region "$REGION" --association-id "$assoc_id" || true
+            fi
+            aws ec2 release-address --region "$REGION" --allocation-id "$alloc_id" || true
+          done
+
+          echo "Deleting leftover CS3 IAM instance profile and role"
+          PROFILE_NAME="${NAME_PREFIX}-k3s-profile"
+          ROLE_NAME="${NAME_PREFIX}-k3s-role"
+          aws iam remove-role-from-instance-profile --instance-profile-name "$PROFILE_NAME" --role-name "$ROLE_NAME" 2>/dev/null || true
+          aws iam delete-instance-profile --instance-profile-name "$PROFILE_NAME" 2>/dev/null || true
+          for policy_arn in $(aws iam list-attached-role-policies --role-name "$ROLE_NAME" --query 'AttachedPolicies[].PolicyArn' --output text 2>/dev/null); do
+            aws iam detach-role-policy --role-name "$ROLE_NAME" --policy-arn "$policy_arn" 2>/dev/null || true
+          done
+          for policy_name in $(aws iam list-role-policies --role-name "$ROLE_NAME" --query 'PolicyNames[]' --output text 2>/dev/null); do
+            aws iam delete-role-policy --role-name "$ROLE_NAME" --policy-name "$policy_name" 2>/dev/null || true
+          done
+          aws iam delete-role --role-name "$ROLE_NAME" 2>/dev/null || true
+          set -e
 
   destroy_main:
     name: Terraform Destroy (Main/CS1-2)
@@ -236,11 +337,20 @@ jobs:
           PATTERNS=("cs1" "cs2" "cs3" "bootstrap")
           
           echo ""
+          matches_cleanup_pattern() {
+            local value="$1"
+            for pattern in "${PATTERNS[@]}"; do
+              if [[ "$value" =~ $pattern ]]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
           echo "=== Step 1: Detach and Delete Internet Gateways ==="
           for igw_id in $(aws ec2 describe-internet-gateways --region "$REGION" --query 'InternetGateways[].InternetGatewayId' --output text 2>/dev/null); do
-            for pattern in "${PATTERNS[@]}"; do
-              igw_name=$(aws ec2 describe-internet-gateways --internet-gateway-ids "$igw_id" --region "$REGION" --query 'InternetGateways[0].Tags[?Key==`Name`].Value' --output text 2>/dev/null || true)
-              if [[ "$igw_name" =~ $pattern ]] || [[ -z "$igw_name" ]]; then
+            igw_name=$(aws ec2 describe-internet-gateways --internet-gateway-ids "$igw_id" --region "$REGION" --query 'InternetGateways[0].Tags[?Key==`Name`].Value' --output text 2>/dev/null || true)
+            if matches_cleanup_pattern "$igw_name"; then
                 # Detach from VPC
                 for vpc_id in $(aws ec2 describe-internet-gateways --internet-gateway-ids "$igw_id" --region "$REGION" --query 'InternetGateways[0].Attachments[].VpcId' --output text 2>/dev/null); do
                   echo "Detaching IGW $igw_id from VPC $vpc_id"
@@ -249,24 +359,28 @@ jobs:
                 # Delete IGW
                 echo "Deleting Internet Gateway: $igw_id"
                 aws ec2 delete-internet-gateway --internet-gateway-id "$igw_id" --region "$REGION" 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
-                break
-              fi
-            done
+            fi
           done
           
           echo ""
           echo "=== Step 2: Release Elastic IPs ==="
           for alloc_id in $(aws ec2 describe-addresses --region "$REGION" --query 'Addresses[].AllocationId' --output text 2>/dev/null); do
             public_ip=$(aws ec2 describe-addresses --allocation-ids "$alloc_id" --region "$REGION" --query 'Addresses[0].PublicIp' --output text 2>/dev/null || true)
-            echo "Releasing EIP: $public_ip"
-            aws ec2 release-address --allocation-id "$alloc_id" --region "$REGION" 2>/dev/null && echo "  ✓ Released" || echo "  ✗ Failed"
+            eip_tags=$(aws ec2 describe-addresses --allocation-ids "$alloc_id" --region "$REGION" --query 'Addresses[0].Tags' --output json 2>/dev/null || true)
+            if matches_cleanup_pattern "$eip_tags"; then
+              echo "Releasing EIP: $public_ip"
+              aws ec2 release-address --allocation-id "$alloc_id" --region "$REGION" 2>/dev/null && echo "  ✓ Released" || echo "  ✗ Failed"
+            fi
           done
           
           echo ""
           echo "=== Step 3: Detach and Delete NAT Gateways ==="
           for ngw_id in $(aws ec2 describe-nat-gateways --region "$REGION" --filter Name=state,Values=available --query 'NatGateways[].NatGatewayId' --output text 2>/dev/null); do
-            echo "Deleting NAT Gateway: $ngw_id"
-            aws ec2 delete-nat-gateway --nat-gateway-id "$ngw_id" --region "$REGION" 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
+            nat_tags=$(aws ec2 describe-nat-gateways --nat-gateway-ids "$ngw_id" --region "$REGION" --query 'NatGateways[0].Tags' --output json 2>/dev/null || true)
+            if matches_cleanup_pattern "$nat_tags"; then
+              echo "Deleting NAT Gateway: $ngw_id"
+              aws ec2 delete-nat-gateway --nat-gateway-id "$ngw_id" --region "$REGION" 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
+            fi
           done
           
           # Wait for NAT gateways to be deleted
@@ -361,7 +475,7 @@ jobs:
           echo "=== Step 10: Cleaning up DynamoDB Tables ==="
           for table in $(aws dynamodb list-tables --region $REGION --query 'TableNames[]' --output text 2>/dev/null); do
             for pattern in "${PATTERNS[@]}"; do
-              if [[ "$table" =~ $pattern ]] || [[ "$table" == "terraform-locks" ]]; then
+              if [[ "$table" =~ $pattern ]]; then
                 echo "Deleting DynamoDB table: $table"
                 aws dynamodb delete-table --table-name "$table" --region $REGION 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
                 break
@@ -411,7 +525,7 @@ jobs:
           echo "=== Step 13: Cleaning up CloudWatch Log Groups ==="
           for log_group in $(aws logs describe-log-groups --region $REGION --query 'logGroups[].logGroupName' --output text 2>/dev/null); do
             for pattern in "${PATTERNS[@]}"; do
-              if [[ "$log_group" =~ $pattern ]] || [[ "$log_group" =~ /aws/lambda/ ]] || [[ "$log_group" =~ /aws/eks/ ]]; then
+              if [[ "$log_group" =~ $pattern ]]; then
                 echo "Deleting log group: $log_group"
                 aws logs delete-log-group --log-group-name "$log_group" --region $REGION 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
                 break
@@ -523,7 +637,7 @@ jobs:
           echo "=== Cleaning up CloudWatch Log Groups ==="
           for log_group in $(aws logs describe-log-groups --region ${{ env.AWS_REGION }} --query 'logGroups[].logGroupName' --output text 2>/dev/null); do
             for pattern in "${PATTERNS[@]}"; do
-              if [[ "$log_group" =~ $pattern ]] || [[ "$log_group" =~ /aws/lambda/ ]] || [[ "$log_group" =~ /aws/eks/ ]]; then
+              if [[ "$log_group" =~ $pattern ]]; then
                 echo "Deleting log group: $log_group"
                 aws logs delete-log-group --log-group-name "$log_group" --region ${{ env.AWS_REGION }} 2>/dev/null && echo "  ✓ Deleted" || echo "  ✗ Failed"
                 break
