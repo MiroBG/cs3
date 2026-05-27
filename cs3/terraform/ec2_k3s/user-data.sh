@@ -17,14 +17,33 @@ if ! command -v snap >/dev/null 2>&1; then
   apt-get install -y snapd
 fi
 if command -v snap >/dev/null 2>&1; then
-  snap install amazon-ssm-agent --classic || true
-fi
-if systemctl list-unit-files | grep -q '^amazon-ssm-agent.service'; then
-  systemctl enable amazon-ssm-agent
-  systemctl start amazon-ssm-agent
-elif systemctl list-unit-files | grep -q '^snap.amazon-ssm-agent.amazon-ssm-agent.service'; then
-  systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
-  systemctl start snap.amazon-ssm-agent.amazon-ssm-agent.service
+  systemctl enable --now snapd.socket || true
+  snap wait system seed.loaded || true
+
+  for i in 1 2 3; do
+    if snap install amazon-ssm-agent --classic; then
+      break
+    fi
+    echo "Retrying amazon-ssm-agent snap install ($i/3)..."
+    sleep 10
+  done
+
+  if systemctl list-unit-files | grep -q '^amazon-ssm-agent.service'; then
+    systemctl enable amazon-ssm-agent
+    systemctl restart amazon-ssm-agent
+  elif systemctl list-unit-files | grep -q '^snap.amazon-ssm-agent.amazon-ssm-agent.service'; then
+    systemctl enable snap.amazon-ssm-agent.amazon-ssm-agent.service
+    systemctl restart snap.amazon-ssm-agent.amazon-ssm-agent.service
+  fi
+
+  for i in 1 2 3 4 5; do
+    if systemctl is-active amazon-ssm-agent >/dev/null 2>&1 || systemctl is-active snap.amazon-ssm-agent.amazon-ssm-agent.service >/dev/null 2>&1; then
+      echo "SSM agent is active"
+      break
+    fi
+    echo "Waiting for SSM agent service to become active ($i/5)..."
+    sleep 5
+  done
 fi
 
 # Install dependencies
@@ -67,6 +86,13 @@ mkdir -p /opt/k3s
 cp /etc/rancher/k3s/k3s.yaml /opt/k3s/kubeconfig.yaml
 sed -i "s|https://127.0.0.1:6443|https://$${PUBLIC_IP}:6443|g" /opt/k3s/kubeconfig.yaml
 chmod 644 /opt/k3s/kubeconfig.yaml
+
+echo "====== Refreshing SSM Agent ======"
+if systemctl list-unit-files | grep -q '^amazon-ssm-agent.service'; then
+  systemctl restart amazon-ssm-agent || true
+elif systemctl list-unit-files | grep -q '^snap.amazon-ssm-agent.amazon-ssm-agent.service'; then
+  systemctl restart snap.amazon-ssm-agent.amazon-ssm-agent.service || true
+fi
 
 # Add k3s to PATH
 export PATH=$PATH:/usr/local/bin
