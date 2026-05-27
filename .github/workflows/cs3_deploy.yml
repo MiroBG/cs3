@@ -828,7 +828,7 @@ jobs:
             COGNITO_DOMAIN="disabled"
           fi
 
-          ./scripts/deploy-portal.sh \
+          bash ./scripts/deploy-portal.sh \
             "$PORTAL_IMAGE" \
             "$CLIENT_ID" \
             "$CLIENT_SECRET" \
