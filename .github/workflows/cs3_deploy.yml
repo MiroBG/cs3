@@ -592,6 +592,12 @@ jobs:
           mkdir -p .generated/k3s
           K3S_INSTANCE_ID=$(terraform output -raw ec2_instance_id)
           KUBECONFIG_PARAMETER_NAME=$(terraform output -raw kubeconfig_parameter_name)
+          INSTANCE_LAUNCH_TIME=$(aws ec2 describe-instances \
+            --region "$AWS_REGION" \
+            --instance-ids "$K3S_INSTANCE_ID" \
+            --query 'Reservations[0].Instances[0].LaunchTime' \
+            --output text)
+          INSTANCE_LAUNCH_EPOCH=$(date -d "$INSTANCE_LAUNCH_TIME" +%s)
 
           echo "Waiting for EC2 instance to report running state"
           aws ec2 wait instance-running --region "$AWS_REGION" --instance-ids "$K3S_INSTANCE_ID"
@@ -617,12 +623,24 @@ jobs:
           fi
 
           echo "Waiting for kubeconfig parameter $KUBECONFIG_PARAMETER_NAME"
+          rm -f .generated/k3s/kubeconfig.yaml
           for i in $(seq 1 120); do
             if aws ssm get-parameter \
               --region "$AWS_REGION" \
               --name "$KUBECONFIG_PARAMETER_NAME" \
-              --query 'Parameter.Value' \
-              --output text > .generated/k3s/kubeconfig.yaml 2>/tmp/kubeconfig-parameter.err; then
+              --query 'Parameter.[LastModifiedDate,Value]' \
+              --output json > /tmp/kubeconfig-parameter.json 2>/tmp/kubeconfig-parameter.err; then
+              PARAM_MODIFIED=$(jq -r '.[0]' /tmp/kubeconfig-parameter.json)
+              PARAM_MODIFIED_EPOCH=$(date -d "$PARAM_MODIFIED" +%s)
+
+              if (( PARAM_MODIFIED_EPOCH < INSTANCE_LAUNCH_EPOCH )); then
+                if [[ $((i % 12)) -eq 0 ]]; then
+                  echo "Kubeconfig parameter exists but is stale: modified=$PARAM_MODIFIED, instance_launch=$INSTANCE_LAUNCH_TIME"
+                fi
+              else
+                jq -r '.[1]' /tmp/kubeconfig-parameter.json > .generated/k3s/kubeconfig.yaml
+              fi
+
               if [[ -s .generated/k3s/kubeconfig.yaml ]]; then
                 echo "Fetched kubeconfig from Parameter Store"
                 break
@@ -681,12 +699,21 @@ jobs:
 
           K3S_INSTANCE_ID=$(terraform output -raw ec2_instance_id)
           K3S_PUBLIC_IP=$(terraform output -raw ec2_instance_public_ip)
+          KUBECONFIG_PARAMETER_NAME=$(terraform output -raw kubeconfig_parameter_name)
           echo "Waiting for k3s API on ${K3S_PUBLIC_IP}:6443"
 
           for i in $(seq 1 120); do
-            if kubectl --request-timeout=10s --kubeconfig .generated/k3s/kubeconfig.yaml get nodes; then
+            if kubectl --request-timeout=10s --kubeconfig .generated/k3s/kubeconfig.yaml get nodes 2>/tmp/kubectl-get-nodes.err; then
               echo "k3s kubeconfig verified"
               exit 0
+            fi
+
+            cat /tmp/kubectl-get-nodes.err || true
+            if grep -qi 'certificate signed by unknown authority' /tmp/kubectl-get-nodes.err; then
+              echo "ERROR: kubeconfig CA does not match the k3s API certificate."
+              echo "This usually means Parameter Store still contains kubeconfig from an older EC2/k3s instance."
+              echo "Delete $KUBECONFIG_PARAMETER_NAME or rerun after the current instance publishes a fresh kubeconfig."
+              exit 1
             fi
 
             if [[ $((i % 12)) -eq 0 ]]; then
