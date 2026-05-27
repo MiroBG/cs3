@@ -60,7 +60,7 @@ spec:
         - name: DB_NAME
           value: employees
         - name: DB_USER
-          value: admin
+          value: postgres
         - name: DB_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -114,5 +114,5 @@ stringData:
   flask-secret-key: "FLASK_SECRET_KEY_VALUE"
   cognito-client-id: "COGNITO_CLIENT_ID_VALUE"
   cognito-client-secret: "COGNITO_CLIENT_SECRET_VALUE"
-  db-host: "RDS_HOST_VALUE"
-  db-password: "RDS_PASSWORD_VALUE"
+  db-host: "DB_HOST_VALUE"
+  db-password: "DB_PASSWORD_VALUE"

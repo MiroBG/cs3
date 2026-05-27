@@ -33,8 +33,8 @@ kubectl get svc -n cs3-prod
 Edit `cs3/k8s/portal/deployment.yaml` and replace placeholders:
 - `COGNITO_CLIENT_ID_VALUE` → from Cognito user pool
 - `COGNITO_CLIENT_SECRET_VALUE` → from Cognito app client
-- `RDS_HOST_VALUE` → EC2 PostgreSQL endpoint
-- `RDS_PASSWORD_VALUE` → DB password
+- `DB_HOST_VALUE` → EC2 PostgreSQL endpoint or service DNS name
+- `DB_PASSWORD_VALUE` → PostgreSQL password
 - `FLASK_SECRET_KEY_VALUE` → random string
 
 Or use `kubectl create secret`:

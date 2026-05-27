@@ -113,7 +113,7 @@ COGNITO_CLIENT_SECRET         # OAuth app client secret
 COGNITO_DOMAIN                # Cognito domain name
 DB_HOST                       # PostgreSQL hostname
 DB_NAME                       # Database name (employees)
-DB_USER                       # Database user (admin)
+DB_USER                       # Database user (postgres)
 DB_PASSWORD                   # Database password
 DB_PORT                       # Database port (5432)
 PORTAL_URL                    # Portal hostname (https://portal.innovatech.local)
