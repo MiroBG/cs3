@@ -9,7 +9,7 @@ resource "helm_release" "loki" {
   namespace  = kubernetes_namespace.logging.metadata[0].name
   version    = var.loki_stack_chart_version
 
-  create_namespace = true
+  create_namespace = false
 
   set {
     name  = "loki.persistence.enabled"
@@ -45,6 +45,13 @@ resource "helm_release" "loki" {
 resource "kubernetes_namespace" "logging" {
   metadata {
     name = "${var.logging_namespace}${local.resource_suffix_part}"
+  }
+
+  lifecycle {
+    ignore_changes = [
+      metadata[0].annotations,
+      metadata[0].labels
+    ]
   }
 }
 
