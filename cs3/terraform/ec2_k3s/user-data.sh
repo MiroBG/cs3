@@ -103,14 +103,39 @@ curl -sfL https://get.k3s.io | sh -
 
 # Wait for k3s to be ready
 echo "Waiting for k3s to be ready..."
+K3S_READY=false
 for i in {1..60}; do
-  if kubectl get nodes &>/dev/null; then
+  if systemctl is-active --quiet k3s && kubectl get nodes &>/dev/null; then
     echo "k3s is ready!"
+    K3S_READY=true
     break
   fi
   echo "Waiting... ($i/60)"
+  systemctl --no-pager --full status k3s || true
   sleep 5
 done
+
+if [ "$K3S_READY" != "true" ]; then
+  echo "ERROR: k3s did not become ready; refusing to publish a broken kubeconfig"
+  journalctl -u k3s --no-pager -n 120 || true
+  exit 1
+fi
+
+echo "Waiting for k3s API socket on port 6443..."
+for i in {1..60}; do
+  if ss -ltn | grep -q ':6443 '; then
+    echo "k3s API is listening on 6443"
+    break
+  fi
+  echo "Waiting for 6443 listener... ($i/60)"
+  sleep 5
+done
+
+if ! ss -ltn | grep -q ':6443 '; then
+  echo "ERROR: k3s API was ready locally but port 6443 is not listening"
+  journalctl -u k3s --no-pager -n 120 || true
+  exit 1
+fi
 
 # Export kubeconfig as soon as k3s is available so SSM can fetch it while the
 # rest of bootstrap continues.
