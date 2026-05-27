@@ -9,6 +9,12 @@ variable "grafana_admin_password" {
   description = "Grafana admin password"
 }
 
+variable "loki_stack_chart_version" {
+  type        = string
+  default     = "2.10.3"
+  description = "Pinned grafana/loki-stack chart version. 2.10.3 is the newest loki-stack version currently published in the Grafana Helm repo."
+}
+
 variable "resource_suffix" {
   type        = string
   default     = "v2"
