@@ -13,10 +13,18 @@ data "aws_vpcs" "default" {
   }
 }
 
+data "aws_vpcs" "managed" {
+  filter {
+    name   = "tag:Name"
+    values = ["${var.name_prefix}-vpc"]
+  }
+}
+
 locals {
   default_vpc_id  = length(data.aws_vpcs.default.ids) > 0 ? data.aws_vpcs.default.ids[0] : null
-  selected_vpc_id = var.use_default_vpc ? local.default_vpc_id : null
-  create_vpc      = !var.use_default_vpc || local.selected_vpc_id == null
+  managed_vpc_id  = length(data.aws_vpcs.managed.ids) > 0 ? data.aws_vpcs.managed.ids[0] : null
+  selected_vpc_id = var.use_default_vpc ? local.default_vpc_id : local.managed_vpc_id
+  create_vpc      = local.selected_vpc_id == null
 }
 
 resource "aws_vpc" "this" {
@@ -39,20 +47,10 @@ data "aws_subnets" "selected" {
   }
 }
 
-data "aws_internet_gateway" "selected" {
-  count = local.create_vpc ? 0 : 1
-
-  filter {
-    name   = "attachment.vpc-id"
-    values = [local.selected_vpc_id]
-  }
-}
-
 locals {
   existing_subnet_ids = local.create_vpc ? [] : try(data.aws_subnets.selected[0].ids, [])
-  selected_igw_id     = local.create_vpc ? null : try(data.aws_internet_gateway.selected[0].id, null)
   vpc_id              = local.create_vpc ? aws_vpc.this[0].id : local.selected_vpc_id
-  internet_gateway_id = local.create_vpc ? aws_internet_gateway.this[0].id : local.selected_igw_id
+  internet_gateway_id = local.create_vpc ? aws_internet_gateway.this[0].id : null
   public_subnet_ids   = local.create_vpc ? [for subnet in values(aws_subnet.public) : subnet.id] : local.existing_subnet_ids
   private_subnet_ids  = local.create_vpc ? [for subnet in values(aws_subnet.private) : subnet.id] : local.existing_subnet_ids
   database_subnet_ids = local.create_vpc ? [for subnet in values(aws_subnet.database) : subnet.id] : local.existing_subnet_ids
