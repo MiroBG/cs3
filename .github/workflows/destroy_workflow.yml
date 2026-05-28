@@ -78,7 +78,9 @@ jobs:
             echo "TF_VAR_grafana_admin_password=$GRAFANA_PASSWORD" >> "$GITHUB_ENV"
           fi
           echo "TF_VAR_resource_suffix=" >> "$GITHUB_ENV"
-          echo "TF_VAR_use_default_vpc=true" >> "$GITHUB_ENV"
+          echo "TF_VAR_use_default_vpc=false" >> "$GITHUB_ENV"
+          echo "TF_VAR_enable_nat_gateway=false" >> "$GITHUB_ENV"
+          echo "TF_VAR_enable_ssm_vpc_endpoints=false" >> "$GITHUB_ENV"
           echo "TF_VAR_create_k3s_instance=true" >> "$GITHUB_ENV"
           echo "TF_VAR_ec2_instance_type=t2.small" >> "$GITHUB_ENV"
           echo "TF_VAR_manage_cognito_domain=false" >> "$GITHUB_ENV"

@@ -35,13 +35,19 @@ variable "azs" {
 
 variable "enable_nat_gateway" {
   type    = bool
-  default = true
+  default = false
 }
 
 variable "use_default_vpc" {
   type        = bool
   default     = false
   description = "Reuse the AWS account default VPC instead of creating a new one"
+}
+
+variable "enable_ssm_vpc_endpoints" {
+  type        = bool
+  default     = false
+  description = "Create interface VPC endpoints for SSM. Public-subnet k3s uses public SSM endpoints when this is false."
 }
 
 variable "resource_suffix" {

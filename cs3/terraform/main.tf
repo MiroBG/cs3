@@ -25,15 +25,17 @@ provider "helm" {
 module "vpc" {
   source = "./vpc"
 
-  name_prefix           = var.name_prefix
-  cluster_name          = var.cluster_name
-  vpc_cidr              = var.vpc_cidr
-  public_subnet_cidrs   = var.public_subnet_cidrs
-  private_subnet_cidrs  = var.private_subnet_cidrs
-  database_subnet_cidrs = var.database_subnet_cidrs
-  azs                   = var.azs
-  enable_nat_gateway    = var.enable_nat_gateway && !var.use_default_vpc
-  tags                  = var.tags
+  name_prefix              = var.name_prefix
+  cluster_name             = var.cluster_name
+  vpc_cidr                 = var.vpc_cidr
+  public_subnet_cidrs      = var.public_subnet_cidrs
+  private_subnet_cidrs     = var.private_subnet_cidrs
+  database_subnet_cidrs    = var.database_subnet_cidrs
+  azs                      = var.azs
+  use_default_vpc          = var.use_default_vpc
+  enable_nat_gateway       = var.enable_nat_gateway && !var.use_default_vpc
+  enable_ssm_vpc_endpoints = var.enable_ssm_vpc_endpoints
+  tags                     = var.tags
 }
 
 module "ec2_k3s" {

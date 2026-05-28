@@ -13,21 +13,10 @@ data "aws_vpcs" "default" {
   }
 }
 
-data "aws_vpcs" "managed" {
-  filter {
-    name   = "tag:Name"
-    values = ["${var.name_prefix}-vpc"]
-  }
-}
-
-data "aws_vpcs" "all" {}
-
 locals {
   default_vpc_id  = length(data.aws_vpcs.default.ids) > 0 ? data.aws_vpcs.default.ids[0] : null
-  managed_vpc_id  = length(data.aws_vpcs.managed.ids) > 0 ? data.aws_vpcs.managed.ids[0] : null
-  any_vpc_id      = length(data.aws_vpcs.all.ids) > 0 ? data.aws_vpcs.all.ids[0] : null
-  selected_vpc_id = var.use_default_vpc && local.default_vpc_id != null ? local.default_vpc_id : coalesce(local.managed_vpc_id, local.any_vpc_id)
-  create_vpc      = local.selected_vpc_id == null
+  selected_vpc_id = var.use_default_vpc ? local.default_vpc_id : null
+  create_vpc      = !var.use_default_vpc || local.selected_vpc_id == null
 }
 
 resource "aws_vpc" "this" {

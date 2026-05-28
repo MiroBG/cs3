@@ -35,7 +35,7 @@ variable "azs" {
 
 variable "enable_nat_gateway" {
   type    = bool
-  default = true
+  default = false
 }
 
 variable "use_default_vpc" {

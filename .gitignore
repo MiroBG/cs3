@@ -33,4 +33,4 @@ override.tf.json
 # Documentation
 *.typ
 docs/
-
+cs3/things/
