@@ -126,17 +126,61 @@ jobs:
           set +e
           echo "Looking up and importing existing resources (non-fatal if not found)"
 
+          tf_state_address() {
+            local address="$1"
+            local idx_addr="$address"
+            if [[ "$address" != *"]" ]]; then
+              idx_addr="${address}[0]"
+            fi
+
+            if terraform state show "$address" >/dev/null 2>&1; then
+              echo "$address"
+              return 0
+            fi
+            if terraform state show "$idx_addr" >/dev/null 2>&1; then
+              echo "$idx_addr"
+              return 0
+            fi
+            return 1
+          }
+
+          tf_import_if_needed() {
+            local address="$1"
+            local import_id="$2"
+            local idx_addr="$address"
+            local state_addr=""
+
+            if [[ -z "$import_id" || "$import_id" == "None" || "$import_id" == "null" ]]; then
+              return 0
+            fi
+
+            if [[ "$address" != *"]" ]]; then
+              idx_addr="${address}[0]"
+            fi
+
+            state_addr=$(tf_state_address "$address" || true)
+            if [[ -n "$state_addr" ]]; then
+              echo "Rebinding Terraform state for $state_addr"
+              terraform state rm "$state_addr" >/dev/null 2>&1 || true
+            fi
+
+            echo "Attempting import: $address => $import_id"
+            terraform import -input=false -lock=false "$address" "$import_id" >/dev/null 2>&1 \
+              || terraform import -input=false -lock=false "$idx_addr" "$import_id" >/dev/null 2>&1 \
+              || echo "  (skipped - import failed for $address)"
+          }
+
           # 1) ECR repo
           if aws ecr describe-repositories --repository-names "$ECR_REPO_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
             echo "Importing ECR repository: $ECR_REPO_NAME"
-            terraform import -input=false -lock=false module.ecr.aws_ecr_repository.portal "$ECR_REPO_NAME" 2>/dev/null || echo "  (skipped - may already be in state)"
+            tf_import_if_needed "module.ecr.aws_ecr_repository.portal" "$ECR_REPO_NAME"
           fi
 
           # 2) Cognito user pool
           POOL_ID=$(aws cognito-idp list-user-pools --max-results 60 --region "$AWS_REGION" --query "UserPools[?Name=='$COGNITO_USER_POOL_NAME'].Id | [0]" --output text 2>/dev/null || true)
           if [[ -n "$POOL_ID" && "$POOL_ID" != "None" ]]; then
             echo "Importing Cognito User Pool: $POOL_ID"
-            terraform import -input=false -lock=false module.cognito.aws_cognito_user_pool.this "$POOL_ID" 2>/dev/null || echo "  (skipped - may already be in state)"
+            tf_import_if_needed "module.cognito.aws_cognito_user_pool.this" "$POOL_ID"
 
           fi
 
@@ -144,7 +188,7 @@ jobs:
           IDENTITY_POOL_ID=$(aws cognito-identity list-identity-pools --max-results 60 --region "$AWS_REGION" --query "IdentityPools[?IdentityPoolName=='$COGNITO_IDENTITY_POOL_NAME'].IdentityPoolId | [0]" --output text 2>/dev/null || true)
           if [[ -n "$IDENTITY_POOL_ID" && "$IDENTITY_POOL_ID" != "None" ]]; then
             echo "Importing Cognito Identity Pool: $IDENTITY_POOL_ID"
-            terraform import -input=false -lock=false aws_cognito_identity_pool.this "$IDENTITY_POOL_ID" 2>/dev/null || echo "  (skipped - may already be in state)"
+            tf_import_if_needed "aws_cognito_identity_pool.this" "$IDENTITY_POOL_ID"
           fi
 
           echo "✓ Auto-import phase complete"
@@ -152,20 +196,20 @@ jobs:
           if aws iam get-role --role-name "$COGNITO_ROLE_NAME" >/dev/null 2>&1; then
             if [[ -n "$COGNITO_ROLE_NAME" ]]; then
               echo "Importing IAM role (cognito authenticated): $COGNITO_ROLE_NAME"
-              terraform import -input=false -lock=false module.cognito.aws_iam_role.cognito_authenticated "$COGNITO_ROLE_NAME" || echo "Import IAM cognito role failed"
-              terraform import -input=false -lock=false module.cognito.aws_iam_role_policy.cognito_authenticated_policy "$COGNITO_ROLE_NAME:$COGNITO_ROLE_POLICY_NAME" || echo "Import IAM cognito role policy failed"
+              tf_import_if_needed "module.cognito.aws_iam_role.cognito_authenticated" "$COGNITO_ROLE_NAME"
+              tf_import_if_needed "module.cognito.aws_iam_role_policy.cognito_authenticated_policy" "$COGNITO_ROLE_NAME:$COGNITO_ROLE_POLICY_NAME"
             fi
           fi
 
           if [[ -n "$POOL_ID" && "$POOL_ID" != "None" ]]; then
             COGNITO_CLIENT_ID=$(aws cognito-idp list-user-pool-clients --user-pool-id "$POOL_ID" --region "$AWS_REGION" --query "UserPoolClients[?ClientName=='$COGNITO_USER_POOL_CLIENT_NAME'].ClientId | [0]" --output text 2>/dev/null || true)
             if [[ -n "$COGNITO_CLIENT_ID" && "$COGNITO_CLIENT_ID" != "None" ]]; then
-              terraform import -input=false -lock=false module.cognito.aws_cognito_user_pool_client.this "$POOL_ID/$COGNITO_CLIENT_ID" || echo "Import Cognito client failed"
+              tf_import_if_needed "module.cognito.aws_cognito_user_pool_client.this" "$POOL_ID/$COGNITO_CLIENT_ID"
             fi
 
             COGNITO_RESOURCE_SERVER_PRESENT=$(aws cognito-idp list-resource-servers --user-pool-id "$POOL_ID" --region "$AWS_REGION" --query "ResourceServers[?Identifier=='cs3-api'].Identifier | [0]" --output text 2>/dev/null || true)
             if [[ -n "$COGNITO_RESOURCE_SERVER_PRESENT" && "$COGNITO_RESOURCE_SERVER_PRESENT" != "None" ]]; then
-              terraform import -input=false -lock=false module.cognito.aws_cognito_resource_server.this[0] "$POOL_ID|cs3-api" || echo "Import Cognito resource server failed"
+              tf_import_if_needed "module.cognito.aws_cognito_resource_server.this[0]" "$POOL_ID|cs3-api"
             fi
           fi
 
@@ -176,7 +220,7 @@ jobs:
           if [[ -n "$WAF_ID" && "$WAF_ID" != "None" ]]; then
             WAF_IMPORT_ID="$WAF_ID/$WAF_NAME/REGIONAL"
             echo "Importing WAFv2 Web ACL: $WAF_IMPORT_ID"
-            terraform import -input=false -lock=false module.waf.aws_wafv2_web_acl.portal "$WAF_IMPORT_ID" || echo "Import WAF failed"
+            tf_import_if_needed "module.waf.aws_wafv2_web_acl.portal" "$WAF_IMPORT_ID"
           fi
 
           # summary
@@ -312,17 +356,42 @@ jobs:
             return 1
           }
 
+          tf_state_address() {
+            local address="$1"
+            local idx_addr="$address"
+            if [[ "$address" != *"]" ]]; then
+              idx_addr="${address}[0]"
+            fi
+
+            if terraform state show "$address" >/dev/null 2>&1; then
+              echo "$address"
+              return 0
+            fi
+            if terraform state show "$idx_addr" >/dev/null 2>&1; then
+              echo "$idx_addr"
+              return 0
+            fi
+            return 1
+          }
+
           tf_import_if_needed() {
             local address="$1"
             local import_id="$2"
+            local idx_addr="$address"
+            local state_addr=""
 
             if [[ -z "$import_id" || "$import_id" == "None" || "$import_id" == "null" ]]; then
               return 0
             fi
 
-            if tf_in_state "$address"; then
-              echo "State already has: $address"
-              return 0
+            if [[ "$address" != *"]" ]]; then
+              idx_addr="${address}[0]"
+            fi
+
+            state_addr=$(tf_state_address "$address" || true)
+            if [[ -n "$state_addr" ]]; then
+              echo "Rebinding Terraform state for $state_addr"
+              terraform state rm "$state_addr" >/dev/null 2>&1 || true
             fi
 
             # Try plain address first, then indexed [0] form for counted resources
@@ -332,7 +401,6 @@ jobs:
               return 0
             fi
 
-            idx_addr="${address}[0]"
             echo "Attempting indexed import: $idx_addr => $import_id"
             if terraform import -input=false -lock=false "$idx_addr" "$import_id" >/dev/null 2>&1; then
               echo "Imported $idx_addr"
@@ -763,8 +831,8 @@ jobs:
             local import_id="$2"
 
             if terraform state show "$address" >/dev/null 2>&1; then
-              echo "Terraform state already has: $address"
-              return 0
+              echo "Rebinding Terraform state for $address"
+              terraform state rm "$address" >/dev/null 2>&1 || true
             fi
 
             echo "Importing existing resource: $address => $import_id"
