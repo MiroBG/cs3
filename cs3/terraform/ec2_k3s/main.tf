@@ -47,6 +47,14 @@ resource "aws_security_group" "k3s" {
   }
 
   ingress {
+    description = "Grafana NodePort"
+    from_port   = 30100
+    to_port     = 30100
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
     description = "Container ports"
     from_port   = 8000
     to_port     = 9999
