@@ -844,8 +844,9 @@ jobs:
           GRAFANA_ADMIN_PASSWORD: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
         run: |
           set -euo pipefail
+          export KUBECONFIG="$PWD/.generated/k3s/kubeconfig.yaml"
 
-          kubectl --kubeconfig .generated/k3s/kubeconfig.yaml create namespace monitoring --dry-run=client -o yaml | kubectl --kubeconfig .generated/k3s/kubeconfig.yaml apply -f -
+          kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
 
           helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
           helm repo update
@@ -876,13 +877,14 @@ jobs:
           EOF
 
           helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+            --kubeconfig "$KUBECONFIG" \
             --namespace monitoring \
             --values /tmp/cs3-monitoring-values.yaml \
             --wait \
             --timeout 15m
 
-          kubectl --kubeconfig .generated/k3s/kubeconfig.yaml -n monitoring get pods,svc
-          kubectl --kubeconfig .generated/k3s/kubeconfig.yaml -n monitoring get svc prometheus-grafana -o wide
+          kubectl -n monitoring get pods,svc
+          kubectl -n monitoring get svc prometheus-grafana -o wide
 
       - name: Import existing logging namespace
         env:
