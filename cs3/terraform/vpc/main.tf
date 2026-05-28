@@ -47,13 +47,58 @@ data "aws_subnets" "selected" {
   }
 }
 
+data "aws_subnets" "selected_public" {
+  count = local.create_vpc ? 0 : 1
+
+  filter {
+    name   = "vpc-id"
+    values = [local.selected_vpc_id]
+  }
+
+  filter {
+    name   = "tag:Name"
+    values = ["${var.name_prefix}-public-*"]
+  }
+}
+
+data "aws_subnets" "selected_private" {
+  count = local.create_vpc ? 0 : 1
+
+  filter {
+    name   = "vpc-id"
+    values = [local.selected_vpc_id]
+  }
+
+  filter {
+    name   = "tag:Name"
+    values = ["${var.name_prefix}-private-*"]
+  }
+}
+
+data "aws_subnets" "selected_database" {
+  count = local.create_vpc ? 0 : 1
+
+  filter {
+    name   = "vpc-id"
+    values = [local.selected_vpc_id]
+  }
+
+  filter {
+    name   = "tag:Name"
+    values = ["${var.name_prefix}-database-*"]
+  }
+}
+
 locals {
-  existing_subnet_ids = local.create_vpc ? [] : try(data.aws_subnets.selected[0].ids, [])
-  vpc_id              = local.create_vpc ? aws_vpc.this[0].id : local.selected_vpc_id
-  internet_gateway_id = local.create_vpc ? aws_internet_gateway.this[0].id : null
-  public_subnet_ids   = local.create_vpc ? [for subnet in values(aws_subnet.public) : subnet.id] : local.existing_subnet_ids
-  private_subnet_ids  = local.create_vpc ? [for subnet in values(aws_subnet.private) : subnet.id] : local.existing_subnet_ids
-  database_subnet_ids = local.create_vpc ? [for subnet in values(aws_subnet.database) : subnet.id] : local.existing_subnet_ids
+  existing_subnet_ids          = local.create_vpc ? [] : try(data.aws_subnets.selected[0].ids, [])
+  existing_public_subnet_ids   = local.create_vpc ? [] : try(data.aws_subnets.selected_public[0].ids, [])
+  existing_private_subnet_ids  = local.create_vpc ? [] : try(data.aws_subnets.selected_private[0].ids, [])
+  existing_database_subnet_ids = local.create_vpc ? [] : try(data.aws_subnets.selected_database[0].ids, [])
+  vpc_id                       = local.create_vpc ? aws_vpc.this[0].id : local.selected_vpc_id
+  internet_gateway_id          = local.create_vpc ? aws_internet_gateway.this[0].id : null
+  public_subnet_ids            = local.create_vpc ? [for subnet in values(aws_subnet.public) : subnet.id] : (length(local.existing_public_subnet_ids) > 0 ? local.existing_public_subnet_ids : local.existing_subnet_ids)
+  private_subnet_ids           = local.create_vpc ? [for subnet in values(aws_subnet.private) : subnet.id] : local.existing_private_subnet_ids
+  database_subnet_ids          = local.create_vpc ? [for subnet in values(aws_subnet.database) : subnet.id] : local.existing_database_subnet_ids
 }
 
 data "aws_vpc" "selected" {

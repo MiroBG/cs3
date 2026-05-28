@@ -183,19 +183,19 @@ variable "enable_docker_swarm" {
 
 variable "swarm_manager_count" {
   type        = number
-  default     = 3
+  default     = 1
   description = "Number of Docker Swarm manager nodes (if enabled)"
 }
 
 variable "swarm_worker_count" {
   type        = number
-  default     = 3
+  default     = 0
   description = "Number of Docker Swarm worker nodes (if enabled)"
 }
 
 variable "swarm_instance_type" {
   type        = string
-  default     = "t3.medium"
+  default     = "t2.small"
   description = "EC2 instance type for Swarm nodes"
 }
 

@@ -1059,6 +1059,7 @@ jobs:
           kubectl -n monitoring get svc grafana -o wide
 
       - name: Import existing logging namespace
+        if: ${{ vars.CS3_ENABLE_LOKI == 'true' }}
         env:
           TF_VAR_resource_suffix: ""
           TF_VAR_db_password: "${{ secrets.CS3_DB_PASSWORD }}"
@@ -1107,6 +1108,7 @@ jobs:
           fi
 
       - name: Terraform apply logging stack
+        if: ${{ vars.CS3_ENABLE_LOKI == 'true' }}
         env:
           TF_LOG: DEBUG
           TF_VAR_resource_suffix: ""

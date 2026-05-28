@@ -255,35 +255,10 @@ echo "====== Installing Helm ======"
 # Install Helm
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
 
-echo "====== Installing Prometheus & Grafana ======"
-# Add Helm repos
-helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-helm repo add grafana https://grafana.github.io/helm-charts
-helm repo update
-
-# Create monitoring namespace
+echo "====== Preparing Monitoring Namespace ======"
+# Keep bootstrapping light for single-vCPU student accounts. The GitHub Actions
+# deployment installs the lightweight Prometheus/Grafana manifests after k3s is reachable.
 kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
-
-# Install Prometheus
-helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
-  --namespace monitoring \
-  --values - <<EOF
-grafana:
-  enabled: true
-  adminPassword: ${grafana_admin_password}
-  service:
-    type: NodePort
-    nodePort: 30100
-prometheus:
-  prometheusSpec:
-    storageSpec:
-      volumeClaimTemplate:
-        spec:
-          accessModes: ["ReadWriteOnce"]
-          resources:
-            requests:
-              storage: 5Gi
-EOF
 
 echo "====== Setting up Portal Namespace ======"
 # Create namespace for portal application
@@ -296,5 +271,5 @@ echo "=== Access Information ==="
 echo "Public IP: $${PUBLIC_IP}"
 echo "Kubeconfig: /opt/k3s/kubeconfig.yaml"
 echo "PostgreSQL: localhost:5432 (user: postgres, password in AWS Secrets Manager)"
-echo "Grafana: http://$${PUBLIC_IP}:30100"
+echo "Grafana: http://$${PUBLIC_IP}:30100 (after GitHub Actions monitoring step)"
 echo "k3s API: https://$${PUBLIC_IP}:6443"
