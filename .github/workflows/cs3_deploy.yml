@@ -839,6 +839,51 @@ jobs:
           aws ec2 describe-instance-status --region "$AWS_REGION" --instance-ids "$K3S_INSTANCE_ID" --output table || true
           exit 1
 
+      - name: Ensure monitoring stack
+        env:
+          GRAFANA_ADMIN_PASSWORD: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
+        run: |
+          set -euo pipefail
+
+          kubectl --kubeconfig .generated/k3s/kubeconfig.yaml create namespace monitoring --dry-run=client -o yaml | kubectl --kubeconfig .generated/k3s/kubeconfig.yaml apply -f -
+
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update
+
+          cat > /tmp/cs3-monitoring-values.yaml <<EOF
+          alertmanager:
+            enabled: false
+          grafana:
+            enabled: true
+            adminPassword: ${GRAFANA_ADMIN_PASSWORD}
+            service:
+              type: NodePort
+              nodePort: 30100
+          prometheus:
+            prometheusSpec:
+              retention: 2d
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 512Mi
+                limits:
+                  cpu: 500m
+                  memory: 1Gi
+          prometheus-node-exporter:
+            enabled: true
+          kube-state-metrics:
+            enabled: true
+          EOF
+
+          helm upgrade --install prometheus prometheus-community/kube-prometheus-stack \
+            --namespace monitoring \
+            --values /tmp/cs3-monitoring-values.yaml \
+            --wait \
+            --timeout 15m
+
+          kubectl --kubeconfig .generated/k3s/kubeconfig.yaml -n monitoring get pods,svc
+          kubectl --kubeconfig .generated/k3s/kubeconfig.yaml -n monitoring get svc prometheus-grafana -o wide
+
       - name: Import existing logging namespace
         env:
           TF_VAR_resource_suffix: ""
