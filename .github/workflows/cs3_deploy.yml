@@ -357,6 +357,7 @@ jobs:
           K3S_VPC_ID=""
           CLUSTER_NAME="${TF_VAR_cluster_name:-cs3-k3s-cluster}"
           PORTAL_LOG_GROUP_NAME="/aws/eks/${CLUSTER_NAME}${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}/portal"
+          ENABLE_SSM_VPC_ENDPOINTS="${TF_VAR_enable_ssm_vpc_endpoints:-false}"
 
           export TF_IN_AUTOMATION=true
           echo "Looking up and importing resources (idempotent mode)"
@@ -459,9 +460,11 @@ jobs:
               tf_import_if_needed "module.ec2_k3s.aws_security_group.k3s" "$K3S_SG_ID"
             fi
 
-            VPC_ENDPOINT_SG_ID=$(aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=group-name,Values=$VPC_ENDPOINT_SG_NAME" "Name=vpc-id,Values=$K3S_VPC_ID" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
-            if [[ -n "$VPC_ENDPOINT_SG_ID" && "$VPC_ENDPOINT_SG_ID" != "None" ]]; then
-              tf_import_if_needed "module.vpc.aws_security_group.vpc_endpoints[0]" "$VPC_ENDPOINT_SG_ID"
+            if [[ "$ENABLE_SSM_VPC_ENDPOINTS" == "true" ]]; then
+              VPC_ENDPOINT_SG_ID=$(aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=group-name,Values=$VPC_ENDPOINT_SG_NAME" "Name=vpc-id,Values=$K3S_VPC_ID" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+              if [[ -n "$VPC_ENDPOINT_SG_ID" && "$VPC_ENDPOINT_SG_ID" != "None" ]]; then
+                tf_import_if_needed "module.vpc.aws_security_group.vpc_endpoints[0]" "$VPC_ENDPOINT_SG_ID"
+              fi
             fi
 
             if aws iam get-role --role-name "$K3S_ROLE_NAME" >/dev/null 2>&1; then
@@ -495,9 +498,10 @@ jobs:
           fi
 
           # Detect existing VPC endpoints for SSM-related services and import them
-          # This prevents Terraform from attempting to create endpoints that already
-          # exist with different private-dns settings (causes CreateVpcEndpoint errors).
-          if [[ -n "$K3S_VPC_ID" && "$K3S_VPC_ID" != "None" ]]; then
+          # This only applies when endpoint resources are enabled in Terraform.
+          if [[ "$ENABLE_SSM_VPC_ENDPOINTS" != "true" ]]; then
+            echo "SSM VPC endpoints disabled. Skipping VPC endpoint imports."
+          elif [[ -n "$K3S_VPC_ID" && "$K3S_VPC_ID" != "None" ]]; then
             echo "Checking for existing VPC endpoints in VPC $K3S_VPC_ID"
             echo "Listing security groups matching name/tag for debugging: $VPC_ENDPOINT_SG_NAME"
             aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=group-name,Values=$VPC_ENDPOINT_SG_NAME" "Name=vpc-id,Values=$K3S_VPC_ID" --query 'SecurityGroups[].{Id:GroupId,Name:GroupName,Tags:Tags}' --output json || true
@@ -597,36 +601,40 @@ jobs:
           K3S_INSTANCE_ID=$(aws ec2 describe-instances --region "$AWS_REGION" --filters "Name=tag:Name,Values=$K3S_INSTANCE_NAME" "Name=instance-state-name,Values=pending,running,stopping,stopped" --query "Reservations[].Instances[].InstanceId | [0]" --output text 2>/dev/null || true)
           tf_import_if_needed "module.ec2_k3s.aws_instance.k3s" "$K3S_INSTANCE_ID"
 
-          # Try to find and import the VPC endpoint security group even if the k3s EC2 instance
-          # doesn't exist yet. We try multiple lookup strategies (group-name, tag:Name)
-          # and optionally constrain by VPC when we can discover it from the instance.
-          VPC_ENDPOINT_SG_ID=""
-          if [[ -n "$K3S_INSTANCE_ID" && "$K3S_INSTANCE_ID" != "None" ]]; then
-            K3S_VPC_ID=$(aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$K3S_INSTANCE_ID" --query 'Reservations[0].Instances[0].VpcId' --output text 2>/dev/null || echo "")
+          if [[ "$ENABLE_SSM_VPC_ENDPOINTS" == "true" ]]; then
+            # Try to find and import the VPC endpoint security group even if the k3s EC2 instance
+            # doesn't exist yet. We try multiple lookup strategies (group-name, tag:Name)
+            # and optionally constrain by VPC when we can discover it from the instance.
+            VPC_ENDPOINT_SG_ID=""
+            if [[ -n "$K3S_INSTANCE_ID" && "$K3S_INSTANCE_ID" != "None" ]]; then
+              K3S_VPC_ID=$(aws ec2 describe-instances --region "$AWS_REGION" --instance-ids "$K3S_INSTANCE_ID" --query 'Reservations[0].Instances[0].VpcId' --output text 2>/dev/null || echo "")
+            else
+              K3S_VPC_ID=""
+            fi
+
+            if [[ -n "$K3S_VPC_ID" && "$K3S_VPC_ID" != "None" ]]; then
+              echo "Looking for endpoint SG by group-name within VPC $K3S_VPC_ID"
+              VPC_ENDPOINT_SG_ID=$(aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=group-name,Values=$VPC_ENDPOINT_SG_NAME" "Name=vpc-id,Values=$K3S_VPC_ID" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+            fi
+
+            if [[ -z "$VPC_ENDPOINT_SG_ID" || "$VPC_ENDPOINT_SG_ID" == "None" ]]; then
+              echo "Fallback: looking for endpoint SG by tag:Name across the VPCs"
+              VPC_ENDPOINT_SG_ID=$(aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=tag:Name,Values=$VPC_ENDPOINT_SG_NAME" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+            fi
+
+            if [[ -z "$VPC_ENDPOINT_SG_ID" || "$VPC_ENDPOINT_SG_ID" == "None" ]]; then
+              echo "Fallback: looking for endpoint SG by group-name across the VPCs"
+              VPC_ENDPOINT_SG_ID=$(aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=group-name,Values=$VPC_ENDPOINT_SG_NAME" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
+            fi
+
+            if [[ -n "$VPC_ENDPOINT_SG_ID" && "$VPC_ENDPOINT_SG_ID" != "None" && "$VPC_ENDPOINT_SG_ID" != "" ]]; then
+              echo "Found VPC endpoint SG: $VPC_ENDPOINT_SG_ID (importing into module.vpc.aws_security_group.vpc_endpoints)"
+              tf_import_if_needed "module.vpc.aws_security_group.vpc_endpoints" "$VPC_ENDPOINT_SG_ID"
+            else
+              echo "No existing VPC endpoint SG found by name/tag; Terraform will create one if required."
+            fi
           else
-            K3S_VPC_ID=""
-          fi
-
-          if [[ -n "$K3S_VPC_ID" && "$K3S_VPC_ID" != "None" ]]; then
-            echo "Looking for endpoint SG by group-name within VPC $K3S_VPC_ID"
-            VPC_ENDPOINT_SG_ID=$(aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=group-name,Values=$VPC_ENDPOINT_SG_NAME" "Name=vpc-id,Values=$K3S_VPC_ID" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
-          fi
-
-          if [[ -z "$VPC_ENDPOINT_SG_ID" || "$VPC_ENDPOINT_SG_ID" == "None" ]]; then
-            echo "Fallback: looking for endpoint SG by tag:Name across the VPCs"
-            VPC_ENDPOINT_SG_ID=$(aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=tag:Name,Values=$VPC_ENDPOINT_SG_NAME" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
-          fi
-
-          if [[ -z "$VPC_ENDPOINT_SG_ID" || "$VPC_ENDPOINT_SG_ID" == "None" ]]; then
-            echo "Fallback: looking for endpoint SG by group-name across the VPCs"
-            VPC_ENDPOINT_SG_ID=$(aws ec2 describe-security-groups --region "$AWS_REGION" --filters "Name=group-name,Values=$VPC_ENDPOINT_SG_NAME" --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
-          fi
-
-          if [[ -n "$VPC_ENDPOINT_SG_ID" && "$VPC_ENDPOINT_SG_ID" != "None" && "$VPC_ENDPOINT_SG_ID" != "" ]]; then
-            echo "Found VPC endpoint SG: $VPC_ENDPOINT_SG_ID (importing into module.vpc.aws_security_group.vpc_endpoints)"
-            tf_import_if_needed "module.vpc.aws_security_group.vpc_endpoints" "$VPC_ENDPOINT_SG_ID"
-          else
-            echo "No existing VPC endpoint SG found by name/tag; Terraform will create one if required."
+            echo "SSM VPC endpoints disabled. Skipping VPC endpoint security group import."
           fi
 
           K3S_EIP_ALLOC_ID=$(aws ec2 describe-addresses --region "$AWS_REGION" --filters "Name=tag:Name,Values=$K3S_EIP_NAME" --query "Addresses[0].AllocationId" --output text 2>/dev/null || true)
