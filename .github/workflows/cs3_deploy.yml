@@ -149,6 +149,7 @@ jobs:
             local import_id="$2"
             local idx_addr="$address"
             local state_addr=""
+            local import_log=""
 
             if [[ -z "$import_id" || "$import_id" == "None" || "$import_id" == "null" ]]; then
               return 0
@@ -164,10 +165,25 @@ jobs:
               terraform state rm "$state_addr" >/dev/null 2>&1 || true
             fi
 
+            import_log=$(mktemp)
             echo "Attempting import: $address => $import_id"
-            terraform import -input=false -lock=false "$address" "$import_id" >/dev/null 2>&1 \
-              || terraform import -input=false -lock=false "$idx_addr" "$import_id" >/dev/null 2>&1 \
-              || echo "  (skipped - import failed for $address)"
+            if terraform import -input=false -lock=false "$address" "$import_id" >"$import_log" 2>&1; then
+              echo "Imported $address"
+              rm -f "$import_log"
+              return 0
+            fi
+
+            echo "Attempting indexed import: $idx_addr => $import_id"
+            if terraform import -input=false -lock=false "$idx_addr" "$import_id" >>"$import_log" 2>&1; then
+              echo "Imported $idx_addr"
+              rm -f "$import_log"
+              return 0
+            fi
+
+            echo "ERROR: import failed for $address"
+            sed -n '1,80p' "$import_log" | sed 's/^/  /'
+            rm -f "$import_log"
+            exit 1
           }
 
           # 1) ECR repo
@@ -379,6 +395,7 @@ jobs:
             local import_id="$2"
             local idx_addr="$address"
             local state_addr=""
+            local import_log=""
 
             if [[ -z "$import_id" || "$import_id" == "None" || "$import_id" == "null" ]]; then
               return 0
@@ -394,21 +411,26 @@ jobs:
               terraform state rm "$state_addr" >/dev/null 2>&1 || true
             fi
 
+            import_log=$(mktemp)
             # Try plain address first, then indexed [0] form for counted resources
             echo "Attempting import: $address => $import_id"
-            if terraform import -input=false -lock=false "$address" "$import_id" >/dev/null 2>&1; then
+            if terraform import -input=false -lock=false "$address" "$import_id" >"$import_log" 2>&1; then
               echo "Imported $address"
+              rm -f "$import_log"
               return 0
             fi
 
             echo "Attempting indexed import: $idx_addr => $import_id"
-            if terraform import -input=false -lock=false "$idx_addr" "$import_id" >/dev/null 2>&1; then
+            if terraform import -input=false -lock=false "$idx_addr" "$import_id" >>"$import_log" 2>&1; then
               echo "Imported $idx_addr"
+              rm -f "$import_log"
               return 0
             fi
 
-            echo "  (skipped: import failed for $address and $idx_addr)"
-            return 0
+            echo "ERROR: import failed for $address and $idx_addr"
+            sed -n '1,80p' "$import_log" | sed 's/^/  /'
+            rm -f "$import_log"
+            exit 1
           }
 
           # ECR (only import if repo exists in AWS)
