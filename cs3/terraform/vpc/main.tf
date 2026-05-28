@@ -156,9 +156,9 @@ resource "aws_route" "public_default" {
 }
 
 resource "aws_route_table_association" "public" {
-  for_each = local.create_vpc ? aws_subnet.public : {}
+  for_each = local.create_vpc ? { for index, cidr in var.public_subnet_cidrs : index => cidr } : {}
 
-  subnet_id      = each.value.id
+  subnet_id      = aws_subnet.public[each.key].id
   route_table_id = aws_route_table.public[0].id
 }
 
@@ -179,9 +179,9 @@ resource "aws_route" "private_default" {
 }
 
 resource "aws_route_table_association" "private" {
-  for_each = local.create_vpc ? aws_subnet.private : {}
+  for_each = local.create_vpc ? { for index, cidr in var.private_subnet_cidrs : index => cidr } : {}
 
-  subnet_id      = each.value.id
+  subnet_id      = aws_subnet.private[each.key].id
   route_table_id = aws_route_table.private[0].id
 }
 
