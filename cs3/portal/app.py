@@ -9,6 +9,7 @@ Integrates with Cognito for authentication and PostgreSQL for data.
 import os
 import json
 import logging
+import time
 from datetime import datetime
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
@@ -43,6 +44,9 @@ DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_PORT = int(os.getenv("DB_PORT", 5432))
 
+REQUEST_COUNTS = {}
+REQUEST_LATENCY = {}
+
 
 def get_db_connection():
     """Get PostgreSQL connection."""
@@ -57,6 +61,32 @@ def get_db_connection():
     except psycopg2.Error as e:
         logger.error(f"Database connection error: {e}")
         return None
+
+
+def metric_route():
+    """Use stable Flask route labels for Prometheus metrics."""
+    if request.endpoint and request.url_rule:
+        return request.url_rule.rule
+    return request.path
+
+
+@app.before_request
+def start_request_timer():
+    request._cs3_start_time = time.time()
+
+
+@app.after_request
+def record_request_metrics(response):
+    route = metric_route()
+    labels = (request.method, route, str(response.status_code))
+    REQUEST_COUNTS[labels] = REQUEST_COUNTS.get(labels, 0) + 1
+
+    duration = time.time() - getattr(request, "_cs3_start_time", time.time())
+    latency_key = (request.method, route)
+    stats = REQUEST_LATENCY.setdefault(latency_key, {"count": 0, "sum": 0.0})
+    stats["count"] += 1
+    stats["sum"] += duration
+    return response
 
 
 def cognito_configured():
@@ -303,23 +333,61 @@ def health():
 
 @app.route("/metrics")
 def metrics():
-    """Minimal Prometheus metrics endpoint."""
+    """Prometheus metrics endpoint for portal health and API activity."""
     conn = get_db_connection()
     db_up = 1 if conn else 0
+    employee_count = 0
+    pending_request_count = 0
     if conn:
-        conn.close()
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM employees")
+            employee_count = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM employee_requests WHERE status = 'pending'")
+            pending_request_count = cursor.fetchone()[0]
+            cursor.close()
+        except psycopg2.Error as e:
+            logger.error(f"Metrics database query failed: {e}")
+        finally:
+            conn.close()
 
-    body = "\n".join(
+    lines = [
+        "# HELP cs3_portal_info CS3 portal application info",
+        "# TYPE cs3_portal_info gauge",
+        'cs3_portal_info{app="cs3-portal"} 1',
+        "# HELP cs3_portal_database_up Database connectivity status",
+        "# TYPE cs3_portal_database_up gauge",
+        f"cs3_portal_database_up {db_up}",
+        "# HELP cs3_portal_employees_total Employee records in the portal database",
+        "# TYPE cs3_portal_employees_total gauge",
+        f"cs3_portal_employees_total {employee_count}",
+        "# HELP cs3_portal_pending_requests_total Pending self-service requests",
+        "# TYPE cs3_portal_pending_requests_total gauge",
+        f"cs3_portal_pending_requests_total {pending_request_count}",
+        "# HELP cs3_portal_http_requests_total HTTP requests handled by the portal",
+        "# TYPE cs3_portal_http_requests_total counter",
+    ]
+
+    for (method, route, status), count in sorted(REQUEST_COUNTS.items()):
+        lines.append(
+            f'cs3_portal_http_requests_total{{method="{method}",route="{route}",status="{status}"}} {count}'
+        )
+
+    lines.extend(
         [
-            "# HELP cs3_portal_info CS3 portal application info",
-            "# TYPE cs3_portal_info gauge",
-            'cs3_portal_info{app="cs3-portal"} 1',
-            "# HELP cs3_portal_database_up Database connectivity status",
-            "# TYPE cs3_portal_database_up gauge",
-            f"cs3_portal_database_up {db_up}",
-            "",
+            "# HELP cs3_portal_request_latency_seconds Request latency by route",
+            "# TYPE cs3_portal_request_latency_seconds summary",
         ]
     )
+    for (method, route), stats in sorted(REQUEST_LATENCY.items()):
+        lines.append(
+            f'cs3_portal_request_latency_seconds_count{{method="{method}",route="{route}"}} {stats["count"]}'
+        )
+        lines.append(
+            f'cs3_portal_request_latency_seconds_sum{{method="{method}",route="{route}"}} {stats["sum"]:.6f}'
+        )
+
+    body = "\n".join(lines) + "\n"
     return app.response_class(body, mimetype="text/plain")
 
 

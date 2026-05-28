@@ -842,9 +842,11 @@ jobs:
       - name: Ensure monitoring stack
         env:
           GRAFANA_ADMIN_PASSWORD: "${{ secrets.GRAFANA_ADMIN_PASSWORD }}"
+          DB_PASSWORD: "${{ secrets.CS3_DB_PASSWORD }}"
         run: |
           set -euo pipefail
           export KUBECONFIG="$PWD/.generated/k3s/kubeconfig.yaml"
+          DB_HOST="$(terraform output -raw ec2_instance_private_ip)"
 
           kubectl create namespace monitoring --dry-run=client -o yaml | kubectl apply -f -
 
@@ -853,6 +855,10 @@ jobs:
 
           kubectl -n monitoring create secret generic grafana-secrets \
             --from-literal=admin-password="${GRAFANA_ADMIN_PASSWORD}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl -n monitoring create secret generic postgres-exporter \
+            --from-literal=data-source-name="postgresql://postgres:${DB_PASSWORD}@${DB_HOST}:5432/employees?sslmode=disable" \
             --dry-run=client -o yaml | kubectl apply -f -
 
           cat > /tmp/cs3-monitoring.yaml <<'EOF'
@@ -868,10 +874,28 @@ jobs:
             name: cs3-prometheus
           rules:
           - apiGroups: [""]
-            resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods"]
+            resources: ["configmaps", "endpoints", "limitranges", "namespaces", "nodes", "nodes/proxy", "persistentvolumeclaims", "persistentvolumes", "pods", "replicationcontrollers", "resourcequotas", "secrets", "services"]
+            verbs: ["get", "list", "watch"]
+          - apiGroups: ["apps"]
+            resources: ["deployments", "daemonsets", "replicasets", "statefulsets"]
+            verbs: ["get", "list", "watch"]
+          - apiGroups: ["autoscaling"]
+            resources: ["horizontalpodautoscalers"]
+            verbs: ["get", "list", "watch"]
+          - apiGroups: ["batch"]
+            resources: ["cronjobs", "jobs"]
+            verbs: ["get", "list", "watch"]
+          - apiGroups: ["policy"]
+            resources: ["poddisruptionbudgets"]
+            verbs: ["get", "list", "watch"]
+          - apiGroups: ["storage.k8s.io"]
+            resources: ["storageclasses", "volumeattachments"]
+            verbs: ["get", "list", "watch"]
+          - apiGroups: ["admissionregistration.k8s.io"]
+            resources: ["mutatingwebhookconfigurations", "validatingwebhookconfigurations"]
             verbs: ["get", "list", "watch"]
           - apiGroups: ["extensions", "networking.k8s.io"]
-            resources: ["ingresses"]
+            resources: ["ingresses", "networkpolicies"]
             verbs: ["get", "list", "watch"]
           ---
           apiVersion: rbac.authorization.k8s.io/v1
@@ -897,6 +921,34 @@ jobs:
               global:
                 scrape_interval: 15s
               scrape_configs:
+              - job_name: prometheus
+                static_configs:
+                - targets: ['localhost:9090']
+              - job_name: node-exporter
+                static_configs:
+                - targets: ['node-exporter:9100']
+              - job_name: kube-state-metrics
+                static_configs:
+                - targets: ['kube-state-metrics:8080']
+              - job_name: postgres-exporter
+                static_configs:
+                - targets: ['postgres-exporter:9187']
+              - job_name: kubernetes-nodes-cadvisor
+                scheme: https
+                bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+                tls_config:
+                  ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+                kubernetes_sd_configs:
+                - role: node
+                relabel_configs:
+                - action: labelmap
+                  regex: __meta_kubernetes_node_label_(.+)
+                - target_label: __address__
+                  replacement: kubernetes.default.svc:443
+                - source_labels: [__meta_kubernetes_node_name]
+                  regex: (.+)
+                  target_label: __metrics_path__
+                  replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
               - job_name: kubernetes-pods
                 kubernetes_sd_configs:
                 - role: pod
@@ -915,6 +967,164 @@ jobs:
                   target_label: __address__
                 - action: labelmap
                   regex: __meta_kubernetes_pod_label_(.+)
+          ---
+          apiVersion: apps/v1
+          kind: DaemonSet
+          metadata:
+            name: node-exporter
+            namespace: monitoring
+          spec:
+            selector:
+              matchLabels:
+                app: node-exporter
+            template:
+              metadata:
+                labels:
+                  app: node-exporter
+              spec:
+                hostPID: true
+                hostNetwork: true
+                containers:
+                - name: node-exporter
+                  image: quay.io/prometheus/node-exporter:v1.8.2
+                  args:
+                  - --path.procfs=/host/proc
+                  - --path.sysfs=/host/sys
+                  - --path.rootfs=/host/root
+                  - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
+                  ports:
+                  - containerPort: 9100
+                    hostPort: 9100
+                  volumeMounts:
+                  - name: proc
+                    mountPath: /host/proc
+                    readOnly: true
+                  - name: sys
+                    mountPath: /host/sys
+                    readOnly: true
+                  - name: root
+                    mountPath: /host/root
+                    readOnly: true
+                  resources:
+                    requests:
+                      cpu: 20m
+                      memory: 32Mi
+                    limits:
+                      cpu: 100m
+                      memory: 128Mi
+                volumes:
+                - name: proc
+                  hostPath:
+                    path: /proc
+                - name: sys
+                  hostPath:
+                    path: /sys
+                - name: root
+                  hostPath:
+                    path: /
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: node-exporter
+            namespace: monitoring
+          spec:
+            clusterIP: None
+            selector:
+              app: node-exporter
+            ports:
+            - name: metrics
+              port: 9100
+              targetPort: 9100
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: kube-state-metrics
+            namespace: monitoring
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: kube-state-metrics
+            template:
+              metadata:
+                labels:
+                  app: kube-state-metrics
+              spec:
+                serviceAccountName: prometheus
+                containers:
+                - name: kube-state-metrics
+                  image: registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.13.0
+                  ports:
+                  - containerPort: 8080
+                  resources:
+                    requests:
+                      cpu: 30m
+                      memory: 64Mi
+                    limits:
+                      cpu: 150m
+                      memory: 192Mi
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: kube-state-metrics
+            namespace: monitoring
+          spec:
+            selector:
+              app: kube-state-metrics
+            ports:
+            - name: metrics
+              port: 8080
+              targetPort: 8080
+          ---
+          apiVersion: apps/v1
+          kind: Deployment
+          metadata:
+            name: postgres-exporter
+            namespace: monitoring
+          spec:
+            replicas: 1
+            selector:
+              matchLabels:
+                app: postgres-exporter
+            template:
+              metadata:
+                labels:
+                  app: postgres-exporter
+              spec:
+                containers:
+                - name: postgres-exporter
+                  image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+                  ports:
+                  - containerPort: 9187
+                  env:
+                  - name: DATA_SOURCE_NAME
+                    valueFrom:
+                      secretKeyRef:
+                        name: postgres-exporter
+                        key: data-source-name
+                  resources:
+                    requests:
+                      cpu: 20m
+                      memory: 64Mi
+                    limits:
+                      cpu: 150m
+                      memory: 192Mi
+          ---
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: postgres-exporter
+            namespace: monitoring
+          spec:
+            selector:
+              app: postgres-exporter
+            ports:
+            - name: metrics
+              port: 9187
+              targetPort: 9187
           ---
           apiVersion: apps/v1
           kind: Deployment
@@ -988,6 +1198,60 @@ jobs:
                 url: http://prometheus:9090
                 isDefault: true
           ---
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: grafana-dashboard-provider
+            namespace: monitoring
+          data:
+            dashboards.yaml: |
+              apiVersion: 1
+              providers:
+              - name: CS3
+                orgId: 1
+                folder: CS3
+                type: file
+                disableDeletion: false
+                updateIntervalSeconds: 30
+                options:
+                  path: /etc/grafana/dashboards
+          ---
+          apiVersion: v1
+          kind: ConfigMap
+          metadata:
+            name: grafana-cs3-dashboard
+            namespace: monitoring
+          data:
+            cs3-overview.json: |
+              {
+                "uid": "cs3-overview",
+                "title": "CS3 k3s Portal Overview",
+                "schemaVersion": 39,
+                "version": 1,
+                "refresh": "15s",
+                "time": {"from": "now-30m", "to": "now"},
+                "panels": [
+                  {"type":"stat","title":"Portal Up","gridPos":{"x":0,"y":0,"w":6,"h":4},"targets":[{"expr":"cs3_portal_info","refId":"A"}]},
+                  {"type":"stat","title":"Portal DB Up","gridPos":{"x":6,"y":0,"w":6,"h":4},"targets":[{"expr":"cs3_portal_database_up","refId":"A"}]},
+                  {"type":"stat","title":"PostgreSQL Up","gridPos":{"x":12,"y":0,"w":6,"h":4},"targets":[{"expr":"pg_up","refId":"A"}]},
+                  {"type":"stat","title":"Running Pods","gridPos":{"x":18,"y":0,"w":6,"h":4},"targets":[{"expr":"sum(kube_pod_status_phase{phase=\"Running\"})","refId":"A"}]},
+                  {"type":"timeseries","title":"Node CPU Usage","gridPos":{"x":0,"y":4,"w":12,"h":8},"targets":[{"expr":"100 - (avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])) * 100)","legendFormat":"{{instance}} CPU %","refId":"A"}],"fieldConfig":{"defaults":{"unit":"percent"}}},
+                  {"type":"timeseries","title":"Node Memory Usage","gridPos":{"x":12,"y":4,"w":12,"h":8},"targets":[{"expr":"100 * (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))","legendFormat":"{{instance}} memory %","refId":"A"}],"fieldConfig":{"defaults":{"unit":"percent"}}},
+                  {"type":"timeseries","title":"Filesystem Usage","gridPos":{"x":0,"y":12,"w":12,"h":8},"targets":[{"expr":"100 * (1 - (node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay\"} / node_filesystem_size_bytes{fstype!~\"tmpfs|overlay\"}))","legendFormat":"{{mountpoint}}","refId":"A"}],"fieldConfig":{"defaults":{"unit":"percent"}}},
+                  {"type":"timeseries","title":"Portal API Requests","gridPos":{"x":12,"y":12,"w":12,"h":8},"targets":[{"expr":"sum by (route,status) (rate(cs3_portal_http_requests_total[5m]))","legendFormat":"{{route}} {{status}}","refId":"A"}]},
+                  {"type":"timeseries","title":"Portal API Latency Avg","gridPos":{"x":0,"y":20,"w":12,"h":8},"targets":[{"expr":"sum by (route) (rate(cs3_portal_request_latency_seconds_sum[5m])) / sum by (route) (rate(cs3_portal_request_latency_seconds_count[5m]))","legendFormat":"{{route}}","refId":"A"}],"fieldConfig":{"defaults":{"unit":"s"}}},
+                  {"type":"timeseries","title":"PostgreSQL Connections","gridPos":{"x":12,"y":20,"w":12,"h":8},"targets":[{"expr":"sum(pg_stat_activity_count)","legendFormat":"connections","refId":"A"}]},
+                  {"type":"timeseries","title":"Kubernetes Deployment Availability","gridPos":{"x":0,"y":28,"w":12,"h":8},"targets":[{"expr":"kube_deployment_status_replicas_available","legendFormat":"{{namespace}}/{{deployment}}","refId":"A"}]},
+                  {"type":"stat","title":"Portal Employees","gridPos":{"x":12,"y":28,"w":6,"h":4},"targets":[{"expr":"cs3_portal_employees_total","refId":"A"}]},
+                  {"type":"stat","title":"Pending Requests","gridPos":{"x":18,"y":28,"w":6,"h":4},"targets":[{"expr":"cs3_portal_pending_requests_total","refId":"A"}]},
+                  {"type":"timeseries","title":"Node Load Average","gridPos":{"x":0,"y":36,"w":8,"h":7},"targets":[{"expr":"node_load1","legendFormat":"1m","refId":"A"},{"expr":"node_load5","legendFormat":"5m","refId":"B"},{"expr":"node_load15","legendFormat":"15m","refId":"C"}]},
+                  {"type":"timeseries","title":"Node Disk IO","gridPos":{"x":8,"y":36,"w":8,"h":7},"targets":[{"expr":"sum by (device) (rate(node_disk_read_bytes_total[5m]))","legendFormat":"{{device}} read","refId":"A"},{"expr":"sum by (device) (rate(node_disk_written_bytes_total[5m]))","legendFormat":"{{device}} write","refId":"B"}],"fieldConfig":{"defaults":{"unit":"Bps"}}},
+                  {"type":"timeseries","title":"Node Network Traffic","gridPos":{"x":16,"y":36,"w":8,"h":7},"targets":[{"expr":"sum by (device) (rate(node_network_receive_bytes_total{device!=\"lo\"}[5m]))","legendFormat":"{{device}} rx","refId":"A"},{"expr":"sum by (device) (rate(node_network_transmit_bytes_total{device!=\"lo\"}[5m]))","legendFormat":"{{device}} tx","refId":"B"}],"fieldConfig":{"defaults":{"unit":"Bps"}}},
+                  {"type":"timeseries","title":"Kubernetes Pod Restarts","gridPos":{"x":0,"y":43,"w":12,"h":7},"targets":[{"expr":"sum by (namespace,pod) (increase(kube_pod_container_status_restarts_total[30m]))","legendFormat":"{{namespace}}/{{pod}}","refId":"A"}]},
+                  {"type":"timeseries","title":"Portal CPU and Memory","gridPos":{"x":12,"y":43,"w":12,"h":7},"targets":[{"expr":"sum(rate(container_cpu_usage_seconds_total{namespace=\"cs3-prod\",pod=~\"cs3-portal.*\",container!=\"\"}[5m]))","legendFormat":"CPU cores","refId":"A"},{"expr":"sum(container_memory_working_set_bytes{namespace=\"cs3-prod\",pod=~\"cs3-portal.*\",container!=\"\"})","legendFormat":"memory","refId":"B"}]}
+                ]
+              }
+          ---
           apiVersion: apps/v1
           kind: Deployment
           metadata:
@@ -1019,6 +1283,10 @@ jobs:
                   volumeMounts:
                   - name: datasources
                     mountPath: /etc/grafana/provisioning/datasources
+                  - name: dashboard-provider
+                    mountPath: /etc/grafana/provisioning/dashboards
+                  - name: dashboards
+                    mountPath: /etc/grafana/dashboards
                   - name: storage
                     mountPath: /var/lib/grafana
                   resources:
@@ -1032,6 +1300,12 @@ jobs:
                 - name: datasources
                   configMap:
                     name: grafana-datasources
+                - name: dashboard-provider
+                  configMap:
+                    name: grafana-dashboard-provider
+                - name: dashboards
+                  configMap:
+                    name: grafana-cs3-dashboard
                 - name: storage
                   emptyDir: {}
           ---
@@ -1052,6 +1326,9 @@ jobs:
           EOF
 
           kubectl apply -f /tmp/cs3-monitoring.yaml
+          kubectl -n monitoring rollout status daemonset/node-exporter --timeout=180s
+          kubectl -n monitoring rollout status deployment/kube-state-metrics --timeout=180s
+          kubectl -n monitoring rollout status deployment/postgres-exporter --timeout=180s
           kubectl -n monitoring rollout status deployment/prometheus --timeout=180s
           kubectl -n monitoring rollout status deployment/grafana --timeout=180s
 
