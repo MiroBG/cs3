@@ -49,3 +49,11 @@ spec:
       port: 53
     - protocol: TCP
       port: 53
+  # HTTPS egress for the Cognito OAuth token exchange and the boto3 Cognito
+  # admin API (provisioning). Cognito has no stable IPs, so this is 0.0.0.0/0:443.
+  - to:
+    - ipBlock:
+        cidr: 0.0.0.0/0
+    ports:
+    - protocol: TCP
+      port: 443
