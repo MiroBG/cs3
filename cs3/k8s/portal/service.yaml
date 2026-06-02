@@ -10,7 +10,10 @@ spec:
   - protocol: TCP
     port: 80
     targetPort: 5000
-  type: LoadBalancer
+  # ClusterIP (not LoadBalancer): on single-node k3s the Traefik Ingress owns
+  # host port 80. A LoadBalancer Service here makes klipper/ServiceLB fight
+  # Traefik for :80, leaving the node unreachable. Access is via the Ingress.
+  type: ClusterIP
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

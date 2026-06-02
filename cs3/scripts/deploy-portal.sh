@@ -88,16 +88,7 @@ fi
 
 echo "Portal service details:"
 kubectl get svc cs3-portal-svc -n $NAMESPACE
+kubectl get ingress cs3-portal-ingress -n $NAMESPACE 2>/dev/null || true
 
-LOAD_BALANCER_IP=$(kubectl get svc cs3-portal-svc -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].hostname}')
-if [ -z "$LOAD_BALANCER_IP" ]; then
-    LOAD_BALANCER_IP=$(kubectl get svc cs3-portal-svc -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-fi
-
-if [ -n "$LOAD_BALANCER_IP" ]; then
-    echo "Portal deployed successfully."
-    echo "Access at: http://$LOAD_BALANCER_IP"
-else
-    echo "LoadBalancer IP not yet assigned. Check status with:"
-    echo "   kubectl get svc cs3-portal-svc -n $NAMESPACE --watch"
-fi
+echo "Portal deployed successfully."
+echo "Access via the Traefik ingress at: ${PORTAL_URL}"

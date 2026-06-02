@@ -1224,7 +1224,10 @@ jobs:
             "$USER_POOL_ID"
 
           kubectl get pods,svc,ingress -n cs3-prod
-          curl -fsS "http://${PORTAL_IP}/api/health"
+          # Resilient health check: bounded connect timeout + retries so a brief
+          # ingress/pod warmup doesn't hard-fail (and never hangs for minutes).
+          curl -fsS --connect-timeout 10 --retry 10 --retry-delay 6 --retry-all-errors \
+            "http://${PORTAL_IP}/api/health"
 
       - name: Output Terraform values
         run: |
