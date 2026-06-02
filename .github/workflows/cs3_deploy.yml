@@ -1290,11 +1290,11 @@ jobs:
             "$USER_POOL_ID"
 
           kubectl get pods,svc,ingress -n cs3-prod
-          # Health check over HTTP/80 (still served via the 'web' entrypoint) so
-          # deploy success doesn't depend on the self-signed TLS path. Retries +
-          # bounded connect timeout so a brief ingress/pod warmup doesn't hard-fail.
-          curl -fsS --connect-timeout 10 --retry 10 --retry-delay 6 --retry-all-errors \
-            "http://${PORTAL_IP}/api/health"
+          # Health check over HTTPS: the ingress router requires TLS, so plain
+          # HTTP/80 returns 404. -k accepts the self-signed cert. Retries + bounded
+          # connect timeout so a brief ingress/pod warmup doesn't hard-fail.
+          curl -fsSk --connect-timeout 10 --retry 10 --retry-delay 6 --retry-all-errors \
+            "https://${PORTAL_IP}/api/health"
 
       - name: Output Terraform values
         run: |
