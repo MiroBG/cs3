@@ -92,11 +92,6 @@ spec:
             configMapKeyRef:
               name: portal-config
               key: portal-url
-        - name: PORTAL_DEMO_AUTH
-          valueFrom:
-            configMapKeyRef:
-              name: portal-config
-              key: portal-demo-auth
         - name: AWS_REGION
           value: eu-central-1
         resources:
@@ -128,7 +123,6 @@ data:
   cognito-user-pool-id: "COGNITO_USER_POOL_ID_VALUE"
   cognito-domain: "COGNITO_DOMAIN_VALUE"
   portal-url: "PORTAL_URL_VALUE"
-  portal-demo-auth: "PORTAL_DEMO_AUTH_VALUE"
 ---
 apiVersion: v1
 kind: Secret

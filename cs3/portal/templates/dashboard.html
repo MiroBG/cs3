@@ -48,9 +48,6 @@
             <h1>CS3 Employee Portal</h1>
             <div>
                 <span>{{ user.name }}</span>
-                {% if config.get("DEMO_AUTH_ENABLED") %}
-                <a href="{{ url_for('login') }}">Switch user</a>
-                {% endif %}
                 <a href="{{ url_for('logout') }}">Logout</a>
             </div>
         </div>

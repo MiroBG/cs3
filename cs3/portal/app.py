@@ -40,30 +40,6 @@ COGNITO_CLIENT_SECRET = os.getenv("COGNITO_CLIENT_SECRET", "")
 COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID", "")
 COGNITO_REGION = os.getenv("AWS_REGION", "eu-central-1")
 PORTAL_URL = os.getenv("PORTAL_URL", "http://localhost:3000")
-DEMO_AUTH_ENABLED = os.getenv("PORTAL_DEMO_AUTH", "false").lower() == "true"
-app.config["DEMO_AUTH_ENABLED"] = DEMO_AUTH_ENABLED
-DEMO_USERS = [
-    {
-        "email": "admin@innovatech.local",
-        "name": "System Admin",
-        "sub": "demo-admin",
-    },
-    {
-        "email": "hr@innovatech.local",
-        "name": "HR Manager",
-        "sub": "demo-hr",
-    },
-    {
-        "email": "john.doe@innovatech.local",
-        "name": "John Doe",
-        "sub": "demo-john",
-    },
-    {
-        "email": "jane.smith@innovatech.local",
-        "name": "Jane Smith",
-        "sub": "demo-jane",
-    },
-]
 
 # Database configuration
 DB_HOST = os.getenv("DB_HOST", "localhost")
@@ -128,17 +104,6 @@ def cognito_configured():
             COGNITO_DOMAIN.lower() not in {"disabled", "none", "local"},
         ]
     )
-
-
-def start_demo_session(email=None):
-    """Create a demo session for local/k3s runs without a Cognito domain."""
-    user = next(
-        (demo_user for demo_user in DEMO_USERS if demo_user["email"] == email),
-        DEMO_USERS[2],
-    )
-    session["user"] = user
-    logger.info(f"Demo portal session started for {user['email']}")
-    return redirect(url_for("dashboard"))
 
 
 def cognito_login_required(f):
@@ -272,16 +237,11 @@ def index():
 def login():
     """Cognito login redirect."""
     if not cognito_configured():
-        if DEMO_AUTH_ENABLED:
-            email = request.args.get("email")
-            if email:
-                return start_demo_session(email)
-            return render_template("login.html", users=DEMO_USERS)
         return (
             jsonify(
                 {
                     "error": "Cognito hosted UI is not configured",
-                    "hint": "Set COGNITO_DOMAIN or enable PORTAL_DEMO_AUTH for the k3s demo.",
+                    "hint": "Set COGNITO_DOMAIN to the Cognito hosted UI domain.",
                 }
             ),
             503,
@@ -463,8 +423,8 @@ def manage_requests():
 @admin_required
 def provision_employee_account():
     """Provision a Cognito account, group assignment, employee row, and audit entry."""
-    if DEMO_AUTH_ENABLED or not COGNITO_USER_POOL_ID:
-        return jsonify({"error": "Account provisioning is not available in demo mode"}), 400
+    if not COGNITO_USER_POOL_ID:
+        return jsonify({"error": "Account provisioning unavailable: COGNITO_USER_POOL_ID is not configured"}), 503
 
     data = request.get_json(silent=True) or {}
     email = (data.get("email") or "").strip().lower()

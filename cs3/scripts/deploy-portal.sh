@@ -17,12 +17,10 @@ DB_HOST=$5
 DB_PASSWORD=$6
 PORTAL_URL=${7:-http://localhost}
 COGNITO_USER_POOL_ID=${8:-}
-PORTAL_DEMO_AUTH="false"
 
 case "${COGNITO_DOMAIN,,}" in
     ""|"disabled"|"none"|"local")
         COGNITO_DOMAIN="disabled"
-        PORTAL_DEMO_AUTH="true"
         ;;
 esac
 
@@ -53,7 +51,6 @@ sed -i "s|COGNITO_CLIENT_SECRET_VALUE|$(escape_sed_replacement "$COGNITO_CLIENT_
 sed -i "s|DB_HOST_VALUE|$(escape_sed_replacement "$DB_HOST")|g" "$RENDER_DIR/portal/deployment.yaml"
 sed -i "s|DB_PASSWORD_VALUE|$(escape_sed_replacement "$DB_PASSWORD")|g" "$RENDER_DIR/portal/deployment.yaml"
 sed -i "s|PORTAL_URL_VALUE|$(escape_sed_replacement "$PORTAL_URL")|g" "$RENDER_DIR/portal/deployment.yaml"
-sed -i "s|PORTAL_DEMO_AUTH_VALUE|$(escape_sed_replacement "$PORTAL_DEMO_AUTH")|g" "$RENDER_DIR/portal/deployment.yaml"
 
 echo "Applying Kubernetes manifests..."
 kubectl apply -f "$CS3_DIR/k8s/00-namespace.yaml"
