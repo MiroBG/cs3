@@ -251,6 +251,46 @@ echo "listen_addresses = '*'" >> /etc/postgresql/16/main/postgresql.conf
 systemctl enable postgresql
 systemctl restart postgresql
 
+echo "====== Configuring PostgreSQL Streaming Replication (local standby) ======"
+# Single-vCPU constraint: a second EC2 node / RDS Multi-AZ is not available, so we
+# run a warm standby cluster on the SAME host (port 5433) via streaming replication.
+# This demonstrates database failover (promote standby + repoint portal); physical
+# node-level HA remains an accepted residual risk documented in the Phase 4 report.
+PG_VER=16
+PRIMARY_HBA="/etc/postgresql/$${PG_VER}/main/pg_hba.conf"
+PRIMARY_CONF="/etc/postgresql/$${PG_VER}/main/postgresql.conf"
+
+cat >> "$${PRIMARY_CONF}" <<'PGCONF'
+wal_level = replica
+max_wal_senders = 5
+max_replication_slots = 5
+hot_standby = on
+wal_keep_size = 128MB
+PGCONF
+
+# Trust replication over loopback only (single-host demo); never exposed off-box.
+echo "host    replication     replicator      127.0.0.1/32            trust" >> "$${PRIMARY_HBA}"
+
+sudo -u postgres psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='replicator'" | grep -q 1 \
+  || sudo -u postgres psql -c "CREATE ROLE replicator WITH REPLICATION LOGIN;"
+
+systemctl restart postgresql@$${PG_VER}-main || systemctl restart postgresql
+
+# Build the standby cluster (best-effort; must never break boot).
+{
+  pg_dropcluster --stop $${PG_VER} standby 2>/dev/null || true
+  pg_createcluster $${PG_VER} standby
+  pg_ctlcluster $${PG_VER} standby stop || true
+  STANDBY_DATA="/var/lib/postgresql/$${PG_VER}/standby"
+  rm -rf "$${STANDBY_DATA}"/*
+  sudo -u postgres pg_basebackup -h 127.0.0.1 -p 5432 -U replicator \
+    -D "$${STANDBY_DATA}" -Fp -Xs -P -R -C -S standby_slot
+  echo "port = 5433" >> "/etc/postgresql/$${PG_VER}/standby/postgresql.conf"
+  chown -R postgres:postgres "$${STANDBY_DATA}"
+  pg_ctlcluster $${PG_VER} standby start
+  echo "Standby cluster streaming from primary; listening on 127.0.0.1:5433"
+} || echo "WARN: standby replication setup failed; primary on 5432 remains available"
+
 echo "====== Installing Helm ======"
 # Install Helm
 curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash

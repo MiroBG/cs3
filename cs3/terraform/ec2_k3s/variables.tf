@@ -71,3 +71,9 @@ variable "tags" {
   default     = {}
   description = "Tags to apply to resources"
 }
+
+variable "enable_endpoint_management" {
+  type        = bool
+  default     = true
+  description = "Enroll the instance into SSM State Manager and apply the endpoint security baseline (Zero Trust device pillar)"
+}
