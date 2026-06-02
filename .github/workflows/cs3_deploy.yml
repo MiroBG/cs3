@@ -105,7 +105,7 @@ jobs:
           echo "TF_VAR_enable_ssm_vpc_endpoints=false" >> "$GITHUB_ENV"
           echo "TF_VAR_create_k3s_instance=true" >> "$GITHUB_ENV"
           echo "TF_VAR_ec2_instance_type=t2.small" >> "$GITHUB_ENV"
-          echo "TF_VAR_manage_cognito_domain=false" >> "$GITHUB_ENV"
+          echo "TF_VAR_manage_cognito_domain=true" >> "$GITHUB_ENV"
           echo "✓ Terraform variables set from secrets"
 
       - name: Auto-import existing AWS resources
@@ -478,7 +478,7 @@ jobs:
           TF_VAR_enable_ssm_vpc_endpoints: "false"
           TF_VAR_create_k3s_instance: "true"
           TF_VAR_ec2_instance_type: "t2.small"
-          TF_VAR_manage_cognito_domain: "false"
+          TF_VAR_manage_cognito_domain: "true"
           TF_VAR_enable_logging: "false"
         run: terraform plan -input=false -out=tfplan
 
@@ -492,7 +492,7 @@ jobs:
           TF_VAR_enable_ssm_vpc_endpoints: "false"
           TF_VAR_create_k3s_instance: "true"
           TF_VAR_ec2_instance_type: "t2.small"
-          TF_VAR_manage_cognito_domain: "false"
+          TF_VAR_manage_cognito_domain: "true"
           TF_VAR_enable_logging: "false"
         run: terraform apply -auto-approve tfplan
 
@@ -1150,7 +1150,7 @@ jobs:
           TF_VAR_enable_ssm_vpc_endpoints: "false"
           TF_VAR_create_k3s_instance: "true"
           TF_VAR_ec2_instance_type: "t2.small"
-          TF_VAR_manage_cognito_domain: "false"
+          TF_VAR_manage_cognito_domain: "true"
           TF_VAR_enable_logging: "true"
           TF_VAR_kubeconfig_path: ".generated/k3s/kubeconfig.yaml"
         run: |
@@ -1199,10 +1199,47 @@ jobs:
           TF_VAR_enable_ssm_vpc_endpoints: "false"
           TF_VAR_create_k3s_instance: "true"
           TF_VAR_ec2_instance_type: "t2.small"
-          TF_VAR_manage_cognito_domain: "false"
+          TF_VAR_manage_cognito_domain: "true"
           TF_VAR_enable_logging: "true"
           TF_VAR_kubeconfig_path: ".generated/k3s/kubeconfig.yaml"
         run: terraform apply -auto-approve
+
+      - name: Register Cognito hosted-UI callback URLs
+        working-directory: cs3
+        env:
+          AWS_REGION: ${{ env.AWS_REGION }}
+        run: |
+          set -euo pipefail
+          USER_POOL_ID="$(terraform -chdir=terraform output -raw cognito_user_pool_id)"
+          CLIENT_ID="$(terraform -chdir=terraform output -raw cognito_client_id)"
+          PORTAL_IP="$(terraform -chdir=terraform output -raw ec2_instance_public_ip)"
+          # HTTPS: Cognito rejects non-localhost http callbacks. The ingress serves
+          # TLS (self-signed) on 443, so the portal is reachable at https://<EIP>.
+          PORTAL_URL="https://${PORTAL_IP}"
+
+          # The portal's redirect_uri is ${PORTAL_URL}/callback and its logout_uri is
+          # ${PORTAL_URL}. The EIP is unknown at plan time and Terraform ignores
+          # callback/logout changes, so we register them here post-apply. Fetch the
+          # current client name so update-user-pool-client doesn't reset it.
+          CLIENT_NAME="$(aws cognito-idp describe-user-pool-client --region "$AWS_REGION" \
+            --user-pool-id "$USER_POOL_ID" --client-id "$CLIENT_ID" \
+            --query 'UserPoolClient.ClientName' --output text)"
+
+          echo "Pointing Cognito app client ($CLIENT_NAME) callbacks at ${PORTAL_URL}"
+          aws cognito-idp update-user-pool-client \
+            --region "$AWS_REGION" \
+            --user-pool-id "$USER_POOL_ID" \
+            --client-id "$CLIENT_ID" \
+            --client-name "$CLIENT_NAME" \
+            --explicit-auth-flows ALLOW_USER_PASSWORD_AUTH ALLOW_REFRESH_TOKEN_AUTH ALLOW_ADMIN_USER_PASSWORD_AUTH \
+            --supported-identity-providers COGNITO \
+            --allowed-o-auth-flows code implicit \
+            --allowed-o-auth-scopes phone email openid profile \
+            --allowed-o-auth-flows-user-pool-client \
+            --callback-urls "${PORTAL_URL}/callback" \
+            --logout-urls "${PORTAL_URL}" \
+            --output text >/dev/null
+          echo "Callback registered: ${PORTAL_URL}/callback ; logout: ${PORTAL_URL}"
 
       - name: Build and push portal image
         working-directory: cs3
@@ -1249,12 +1286,13 @@ jobs:
             "$COGNITO_DOMAIN" \
             "$DB_HOST" \
             "$DB_PASSWORD" \
-            "http://${PORTAL_IP}" \
+            "https://${PORTAL_IP}" \
             "$USER_POOL_ID"
 
           kubectl get pods,svc,ingress -n cs3-prod
-          # Resilient health check: bounded connect timeout + retries so a brief
-          # ingress/pod warmup doesn't hard-fail (and never hangs for minutes).
+          # Health check over HTTP/80 (still served via the 'web' entrypoint) so
+          # deploy success doesn't depend on the self-signed TLS path. Retries +
+          # bounded connect timeout so a brief ingress/pod warmup doesn't hard-fail.
           curl -fsS --connect-timeout 10 --retry 10 --retry-delay 6 --retry-all-errors \
             "http://${PORTAL_IP}/api/health"
 

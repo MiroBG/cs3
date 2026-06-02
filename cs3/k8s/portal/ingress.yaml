@@ -4,7 +4,12 @@ metadata:
   name: cs3-portal-ingress
   namespace: cs3-prod
   annotations:
-    traefik.ingress.kubernetes.io/router.entrypoints: web
+    # Serve both HTTP (80) and HTTPS (443). HTTPS is required because Cognito's
+    # hosted-UI callback must use https://. With no secretName below, Traefik
+    # serves its built-in self-signed certificate (browser shows a one-time
+    # warning) — acceptable for an EIP-only lab with no DNS/cert.
+    traefik.ingress.kubernetes.io/router.entrypoints: web,websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
 spec:
   ingressClassName: traefik
   rules:
@@ -17,3 +22,5 @@ spec:
             name: cs3-portal-svc
             port:
               number: 80
+  tls:
+  - {}
