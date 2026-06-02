@@ -345,6 +345,19 @@ jobs:
             if [[ -n "$COGNITO_CLIENT_ID" && "$COGNITO_CLIENT_ID" != "None" ]]; then
               tf_import_if_needed "module.cognito.aws_cognito_user_pool_client.this" "$COGNITO_USER_POOL_ID/$COGNITO_CLIENT_ID"
             fi
+
+            # A user pool can have only ONE domain. If one already exists (prior run
+            # or manual setup), import it and pin TF_VAR_cognito_domain to its name so
+            # Terraform reuses it instead of creating a second random-suffixed domain
+            # and hitting "User pool already has a domain configured".
+            EXISTING_COGNITO_DOMAIN=$(aws cognito-idp describe-user-pool --user-pool-id "$COGNITO_USER_POOL_ID" --region "$AWS_REGION" --query 'UserPool.Domain' --output text 2>/dev/null || echo "")
+            if [[ -n "$EXISTING_COGNITO_DOMAIN" && "$EXISTING_COGNITO_DOMAIN" != "None" ]]; then
+              tf_import_if_needed "module.cognito.aws_cognito_user_pool_domain.this" "$EXISTING_COGNITO_DOMAIN"
+              echo "TF_VAR_cognito_domain=$EXISTING_COGNITO_DOMAIN" >> "$GITHUB_ENV"
+              echo "Reusing existing Cognito domain: $EXISTING_COGNITO_DOMAIN"
+            else
+              echo "No existing Cognito domain on the pool. Terraform will create one."
+            fi
           else
             echo "Cognito user pool not found. Terraform will create it."
           fi
