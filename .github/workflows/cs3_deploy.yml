@@ -115,7 +115,11 @@ jobs:
 
           NAME_PREFIX="${TF_VAR_name_prefix:-cs3}"
           RESOURCE_SUFFIX="${TF_VAR_resource_suffix:-}"
-          AWS_REGION="${{ env.AWS_REGION }}"
+          # Use the shell env var (workflow-level env.AWS_REGION) rather than a
+          # GitHub expression here: any such expression in this large run block
+          # forces GitHub to template-compile the whole block under its
+          # 21000-character expression-length limit, which this block exceeds.
+          AWS_REGION="${AWS_REGION}"
 
           ECR_REPO_NAME="${NAME_PREFIX}-portal${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
           COGNITO_USER_POOL_NAME="${NAME_PREFIX}-employees${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
