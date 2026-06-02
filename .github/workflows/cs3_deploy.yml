@@ -437,6 +437,31 @@ jobs:
             echo "WAF not found. Terraform will create it."
           fi
 
+          # SSM endpoint management (document + State Manager associations)
+          SSM_DOC_NAME="${NAME_PREFIX}-endpoint-baseline${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          SSM_BASELINE_ASSOC_NAME="${NAME_PREFIX}-endpoint-baseline${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+          SSM_PATCH_ASSOC_NAME="${NAME_PREFIX}-patch-scan${RESOURCE_SUFFIX:+-$RESOURCE_SUFFIX}"
+
+          if aws ssm describe-document --name "$SSM_DOC_NAME" --region "$AWS_REGION" >/dev/null 2>&1; then
+            tf_import_if_needed "module.ec2_k3s.aws_ssm_document.endpoint_baseline" "$SSM_DOC_NAME"
+          else
+            echo "SSM document $SSM_DOC_NAME not found. Terraform will create it."
+          fi
+
+          SSM_BASELINE_ASSOC_ID=$(aws ssm list-associations --region "$AWS_REGION" --association-filter-list "key=AssociationName,value=$SSM_BASELINE_ASSOC_NAME" --query 'Associations[0].AssociationId' --output text 2>/dev/null || echo "")
+          if [[ -n "$SSM_BASELINE_ASSOC_ID" && "$SSM_BASELINE_ASSOC_ID" != "None" ]]; then
+            tf_import_if_needed "module.ec2_k3s.aws_ssm_association.endpoint_baseline" "$SSM_BASELINE_ASSOC_ID"
+          else
+            echo "SSM baseline association not found. Terraform will create it."
+          fi
+
+          SSM_PATCH_ASSOC_ID=$(aws ssm list-associations --region "$AWS_REGION" --association-filter-list "key=AssociationName,value=$SSM_PATCH_ASSOC_NAME" --query 'Associations[0].AssociationId' --output text 2>/dev/null || echo "")
+          if [[ -n "$SSM_PATCH_ASSOC_ID" && "$SSM_PATCH_ASSOC_ID" != "None" ]]; then
+            tf_import_if_needed "module.ec2_k3s.aws_ssm_association.patch_scan" "$SSM_PATCH_ASSOC_ID"
+          else
+            echo "SSM patch-scan association not found. Terraform will create it."
+          fi
+
           echo "Auto-import complete."
 
       - name: Terraform plan
