@@ -34,3 +34,6 @@ override.tf.json
 *.typ
 docs/
 cs3/things/
+
+#Graphify
+graphify-out

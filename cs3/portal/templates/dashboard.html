@@ -34,8 +34,9 @@
         .request-status.approved { background: #27ae60; color: white; }
         .request-status.denied { background: #e74c3c; color: white; }
         .alert { padding: 1rem; border-radius: 4px; margin: 1rem 0; }
-        .alert.success { background: #d5f4e6; color: #27ae60; border-left: 4px solid #27ae60; }
-        .alert.error { background: #fadbd8; color: #e74c3c; border-left: 4px solid #e74c3c; }
+        .alert.success, .alert.alert-success { background: #d5f4e6; color: #27ae60; border-left: 4px solid #27ae60; }
+        .alert.error, .alert.alert-error { background: #fadbd8; color: #e74c3c; border-left: 4px solid #e74c3c; }
+        .admin-only { display: none; }
         .loading { text-align: center; padding: 2rem; }
         .spinner { border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
@@ -47,6 +48,9 @@
             <h1>CS3 Employee Portal</h1>
             <div>
                 <span>{{ user.name }}</span>
+                {% if config.get("DEMO_AUTH_ENABLED") %}
+                <a href="{{ url_for('login') }}">Switch user</a>
+                {% endif %}
                 <a href="{{ url_for('logout') }}">Logout</a>
             </div>
         </div>
@@ -62,6 +66,34 @@
                 <div class="profile-info" id="profile-info"></div>
             </div>
             <div id="profile-error" style="display: none;" class="alert alert-error"></div>
+        </div>
+
+        <div id="admin-provision-card" class="card admin-only">
+            <h2 class="section-title">Provision Employee Account</h2>
+            <form id="provision-form">
+                <div class="form-group">
+                    <label for="employee-name">Full Name</label>
+                    <input id="employee-name" type="text" required>
+                </div>
+                <div class="form-group">
+                    <label for="employee-email">Email</label>
+                    <input id="employee-email" type="email" required>
+                </div>
+                <div class="form-group">
+                    <label for="employee-department">Department</label>
+                    <input id="employee-department" type="text" required>
+                </div>
+                <div class="form-group">
+                    <label for="employee-role">Role</label>
+                    <select id="employee-role" required>
+                        <option value="employee">Employee</option>
+                        <option value="hr">HR</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <button type="submit" class="button">Create Account</button>
+            </form>
+            <div id="provision-message" style="display: none;"></div>
         </div>
 
         <div class="card">
@@ -107,6 +139,9 @@
                 const profile = await response.json();
                 document.getElementById('profile-loading').style.display = 'none';
                 document.getElementById('profile-content').style.display = 'block';
+                if (profile.role === 'admin') {
+                    document.getElementById('admin-provision-card').style.display = 'block';
+                }
                 
                 const profileInfo = document.getElementById('profile-info');
                 profileInfo.innerHTML = `
@@ -125,6 +160,10 @@
                     <div class="info-item">
                         <div class="info-label">Status</div>
                         <div class="info-value">${profile.status}</div>
+                    </div>
+                    <div class="info-item">
+                        <div class="info-label">Role</div>
+                        <div class="info-value">${profile.role}</div>
                     </div>
                 `;
             } catch (error) {
@@ -187,6 +226,38 @@
                 setTimeout(loadRequests, 500);
             } catch (error) {
                 const msg = document.getElementById('request-message');
+                msg.className = 'alert alert-error';
+                msg.textContent = error.message;
+                msg.style.display = 'block';
+            }
+        });
+
+        document.getElementById('provision-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const payload = {
+                name: document.getElementById('employee-name').value,
+                email: document.getElementById('employee-email').value,
+                department: document.getElementById('employee-department').value,
+                role: document.getElementById('employee-role').value
+            };
+
+            const msg = document.getElementById('provision-message');
+            try {
+                const response = await fetch('/api/admin/employees', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const result = await response.json();
+                if (!response.ok) throw new Error(result.error || 'Failed to provision account');
+
+                msg.className = 'alert alert-success';
+                msg.textContent = `Created ${result.employee.email} in Cognito, PostgreSQL, and group ${result.cognito_group}. Temporary password: ${result.temporary_password}`;
+                msg.style.display = 'block';
+                document.getElementById('provision-form').reset();
+            } catch (error) {
                 msg.className = 'alert alert-error';
                 msg.textContent = error.message;
                 msg.style.display = 'block';

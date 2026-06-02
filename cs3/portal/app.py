@@ -10,9 +10,13 @@ import os
 import json
 import logging
 import time
+import secrets
+import string
 from datetime import datetime
 from functools import wraps
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
+import boto3
+from botocore.exceptions import ClientError, BotoCoreError
 import psycopg2
 from psycopg2.extras import RealDictCursor
 import requests
@@ -33,9 +37,33 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-secret-key-change-in-product
 COGNITO_DOMAIN = os.getenv("COGNITO_DOMAIN", "cs3-employees-prod")
 COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID", "")
 COGNITO_CLIENT_SECRET = os.getenv("COGNITO_CLIENT_SECRET", "")
+COGNITO_USER_POOL_ID = os.getenv("COGNITO_USER_POOL_ID", "")
 COGNITO_REGION = os.getenv("AWS_REGION", "eu-central-1")
 PORTAL_URL = os.getenv("PORTAL_URL", "http://localhost:3000")
 DEMO_AUTH_ENABLED = os.getenv("PORTAL_DEMO_AUTH", "false").lower() == "true"
+app.config["DEMO_AUTH_ENABLED"] = DEMO_AUTH_ENABLED
+DEMO_USERS = [
+    {
+        "email": "admin@innovatech.local",
+        "name": "System Admin",
+        "sub": "demo-admin",
+    },
+    {
+        "email": "hr@innovatech.local",
+        "name": "HR Manager",
+        "sub": "demo-hr",
+    },
+    {
+        "email": "john.doe@innovatech.local",
+        "name": "John Doe",
+        "sub": "demo-john",
+    },
+    {
+        "email": "jane.smith@innovatech.local",
+        "name": "Jane Smith",
+        "sub": "demo-jane",
+    },
+]
 
 # Database configuration
 DB_HOST = os.getenv("DB_HOST", "localhost")
@@ -46,6 +74,7 @@ DB_PORT = int(os.getenv("DB_PORT", 5432))
 
 REQUEST_COUNTS = {}
 REQUEST_LATENCY = {}
+COGNITO_CLIENT = boto3.client("cognito-idp", region_name=COGNITO_REGION)
 
 
 def get_db_connection():
@@ -101,14 +130,14 @@ def cognito_configured():
     )
 
 
-def start_demo_session():
+def start_demo_session(email=None):
     """Create a demo session for local/k3s runs without a Cognito domain."""
-    session["user"] = {
-        "email": "john.doe@innovatech.local",
-        "name": "John Doe",
-        "sub": "demo-user",
-    }
-    logger.info("Demo portal session started")
+    user = next(
+        (demo_user for demo_user in DEMO_USERS if demo_user["email"] == email),
+        DEMO_USERS[2],
+    )
+    session["user"] = user
+    logger.info(f"Demo portal session started for {user['email']}")
     return redirect(url_for("dashboard"))
 
 
@@ -124,6 +153,113 @@ def cognito_login_required(f):
     return decorated_function
 
 
+def get_employee_by_email(email):
+    """Return an employee database record for the given email."""
+    conn = get_db_connection()
+    if not conn:
+        return None
+
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(
+            "SELECT id, email, name, department, status, role, created_at FROM employees WHERE email = %s",
+            (email,),
+        )
+        employee = cursor.fetchone()
+        cursor.close()
+        return dict(employee) if employee else None
+    except psycopg2.Error as e:
+        logger.error(f"Employee lookup failed: {e}")
+        return None
+    finally:
+        conn.close()
+
+
+def admin_required(f):
+    """Require the current portal user to have the admin role in PostgreSQL."""
+
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        email = session.get("user", {}).get("email")
+        if not email:
+            return jsonify({"error": "No email in session"}), 401
+
+        employee = get_employee_by_email(email)
+        if not employee or employee.get("role") != "admin":
+            return jsonify({"error": "Admin access required"}), 403
+
+        return f(*args, **kwargs)
+
+    return decorated_function
+
+
+def generate_temporary_password(length=16):
+    """Generate a Cognito-compatible temporary password."""
+    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+    required = [
+        secrets.choice(string.ascii_lowercase),
+        secrets.choice(string.ascii_uppercase),
+        secrets.choice(string.digits),
+        secrets.choice("!@#$%^&*"),
+    ]
+    remaining = [secrets.choice(alphabet) for _ in range(length - len(required))]
+    password_chars = required + remaining
+    secrets.SystemRandom().shuffle(password_chars)
+    return "".join(password_chars)
+
+
+def ensure_cognito_group(group_name):
+    """Create the Cognito group if it does not already exist."""
+    try:
+        COGNITO_CLIENT.get_group(UserPoolId=COGNITO_USER_POOL_ID, GroupName=group_name)
+    except COGNITO_CLIENT.exceptions.ResourceNotFoundException:
+        try:
+            COGNITO_CLIENT.create_group(
+                UserPoolId=COGNITO_USER_POOL_ID,
+                GroupName=group_name,
+                Description=f"CS3 {group_name} users",
+            )
+        except COGNITO_CLIENT.exceptions.GroupExistsException:
+            return
+
+
+def create_cognito_account(email, name, department, role, temporary_password):
+    """Create a Cognito user and assign it to a role-matching group."""
+    if not COGNITO_USER_POOL_ID:
+        raise RuntimeError("COGNITO_USER_POOL_ID is not configured")
+
+    created = False
+    try:
+        COGNITO_CLIENT.admin_create_user(
+            UserPoolId=COGNITO_USER_POOL_ID,
+            Username=email,
+            UserAttributes=[
+                {"Name": "email", "Value": email},
+                {"Name": "email_verified", "Value": "true"},
+                {"Name": "name", "Value": name},
+                {"Name": "custom:department", "Value": department},
+                {"Name": "custom:custom_status", "Value": "active"},
+            ],
+            TemporaryPassword=temporary_password,
+            MessageAction="SUPPRESS",
+        )
+        created = True
+
+        ensure_cognito_group(role)
+        COGNITO_CLIENT.admin_add_user_to_group(
+            UserPoolId=COGNITO_USER_POOL_ID,
+            Username=email,
+            GroupName=role,
+        )
+    except Exception:
+        if created:
+            try:
+                COGNITO_CLIENT.admin_delete_user(UserPoolId=COGNITO_USER_POOL_ID, Username=email)
+            except (ClientError, BotoCoreError):
+                logger.warning(f"Could not roll back Cognito user {email}")
+        raise
+
+
 @app.route("/")
 def index():
     """Portal home page."""
@@ -137,7 +273,10 @@ def login():
     """Cognito login redirect."""
     if not cognito_configured():
         if DEMO_AUTH_ENABLED:
-            return start_demo_session()
+            email = request.args.get("email")
+            if email:
+                return start_demo_session(email)
+            return render_template("login.html", users=DEMO_USERS)
         return (
             jsonify(
                 {
@@ -239,6 +378,7 @@ def get_profile():
     if not conn:
         return jsonify({"error": "Database connection failed"}), 500
 
+    cursor = None
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
         cursor.execute(
@@ -246,8 +386,6 @@ def get_profile():
             (email,),
         )
         profile = cursor.fetchone()
-        cursor.close()
-        conn.close()
 
         if not profile:
             return jsonify({"error": "Profile not found"}), 404
@@ -257,8 +395,9 @@ def get_profile():
         logger.error(f"Database error: {e}")
         return jsonify({"error": "Database error"}), 500
     finally:
-        if conn:
-            conn.close()
+        if cursor:
+            cursor.close()
+        conn.close()
 
 
 @app.route("/api/requests", methods=["GET", "POST"])
@@ -273,6 +412,7 @@ def manage_requests():
     if not conn:
         return jsonify({"error": "Database connection failed"}), 500
 
+    cursor = None
     try:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -313,7 +453,112 @@ def manage_requests():
         logger.error(f"Database error: {e}")
         return jsonify({"error": "Database error"}), 500
     finally:
-        cursor.close()
+        if cursor:
+            cursor.close()
+        conn.close()
+
+
+@app.route("/api/admin/employees", methods=["POST"])
+@cognito_login_required
+@admin_required
+def provision_employee_account():
+    """Provision a Cognito account, group assignment, employee row, and audit entry."""
+    if DEMO_AUTH_ENABLED or not COGNITO_USER_POOL_ID:
+        return jsonify({"error": "Account provisioning is not available in demo mode"}), 400
+
+    data = request.get_json(silent=True) or {}
+    email = (data.get("email") or "").strip().lower()
+    name = (data.get("name") or "").strip()
+    department = (data.get("department") or "").strip()
+    role = (data.get("role") or "employee").strip().lower()
+    temporary_password = (data.get("temporary_password") or "").strip()
+    performed_by = session.get("user", {}).get("email", "unknown")
+
+    if not email or "@" not in email:
+        return jsonify({"error": "A valid email is required"}), 400
+    if not name:
+        return jsonify({"error": "Name is required"}), 400
+    if not department:
+        return jsonify({"error": "Department is required"}), 400
+    if role not in {"employee", "hr", "admin"}:
+        return jsonify({"error": "Role must be employee, hr, or admin"}), 400
+
+    generated_password = False
+    if not temporary_password:
+        temporary_password = generate_temporary_password()
+        generated_password = True
+
+    try:
+        create_cognito_account(email, name, department, role, temporary_password)
+    except COGNITO_CLIENT.exceptions.UsernameExistsException:
+        return jsonify({"error": "Cognito user already exists"}), 409
+    except (ClientError, BotoCoreError, RuntimeError) as e:
+        logger.error(f"Cognito provisioning failed for {email}: {e}")
+        return jsonify({"error": "Cognito provisioning failed", "details": str(e)}), 502
+
+    conn = get_db_connection()
+    if not conn:
+        try:
+            COGNITO_CLIENT.admin_delete_user(UserPoolId=COGNITO_USER_POOL_ID, Username=email)
+        except (ClientError, BotoCoreError) as e:
+            logger.error(f"Failed to roll back Cognito user {email}: {e}")
+        return jsonify({"error": "Database connection failed"}), 500
+
+    cursor = None
+    try:
+        cursor = conn.cursor(cursor_factory=RealDictCursor)
+        cursor.execute(
+            """
+            INSERT INTO employees (email, name, department, status, role, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            RETURNING id, email, name, department, status, role, created_at
+            """,
+            (email, name, department, "active", role, datetime.now(), datetime.now()),
+        )
+        employee = cursor.fetchone()
+        cursor.execute(
+            """
+            INSERT INTO employee_audit_log (employee_id, action, old_status, new_status, performed_by, timestamp)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                employee["id"],
+                "provision",
+                None,
+                "active",
+                performed_by,
+                datetime.now(),
+            ),
+        )
+        conn.commit()
+        logger.info(f"Provisioned employee {email} by {performed_by}")
+
+        response = {
+            "employee": dict(employee),
+            "cognito_group": role,
+            "temporary_password_generated": generated_password,
+        }
+        if generated_password:
+            response["temporary_password"] = temporary_password
+        return jsonify(response), 201
+    except psycopg2.IntegrityError:
+        conn.rollback()
+        try:
+            COGNITO_CLIENT.admin_delete_user(UserPoolId=COGNITO_USER_POOL_ID, Username=email)
+        except (ClientError, BotoCoreError) as e:
+            logger.error(f"Failed to roll back duplicate Cognito user {email}: {e}")
+        return jsonify({"error": "Employee already exists in PostgreSQL"}), 409
+    except psycopg2.Error as e:
+        conn.rollback()
+        logger.error(f"Database provisioning failed for {email}: {e}")
+        try:
+            COGNITO_CLIENT.admin_delete_user(UserPoolId=COGNITO_USER_POOL_ID, Username=email)
+        except (ClientError, BotoCoreError) as rollback_error:
+            logger.error(f"Failed to roll back Cognito user {email}: {rollback_error}")
+        return jsonify({"error": "Database provisioning failed"}), 500
+    finally:
+        if cursor:
+            cursor.close()
         conn.close()
 
 

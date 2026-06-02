@@ -4,8 +4,8 @@
 set -e
 
 if [ $# -lt 6 ]; then
-    echo "Usage: $0 <ECR_IMAGE_URL> <COGNITO_CLIENT_ID> <COGNITO_CLIENT_SECRET> <COGNITO_DOMAIN> <DB_HOST> <DB_PASSWORD> [PORTAL_URL]"
-    echo "Example: $0 123456789012.dkr.ecr.eu-central-1.amazonaws.com/cs3-portal:latest client-id-xxx secret-xxx cs3-employees cs3-db.example.internal db-password http://203.0.113.10"
+    echo "Usage: $0 <ECR_IMAGE_URL> <COGNITO_CLIENT_ID> <COGNITO_CLIENT_SECRET> <COGNITO_DOMAIN> <DB_HOST> <DB_PASSWORD> [PORTAL_URL] [COGNITO_USER_POOL_ID]"
+    echo "Example: $0 123456789012.dkr.ecr.eu-central-1.amazonaws.com/cs3-portal:latest client-id-xxx secret-xxx cs3-employees cs3-db.example.internal db-password http://203.0.113.10 eu-central-1_abc123"
     exit 1
 fi
 
@@ -16,6 +16,7 @@ COGNITO_DOMAIN=$4
 DB_HOST=$5
 DB_PASSWORD=$6
 PORTAL_URL=${7:-http://localhost}
+COGNITO_USER_POOL_ID=${8:-}
 PORTAL_DEMO_AUTH="false"
 
 case "${COGNITO_DOMAIN,,}" in
@@ -44,6 +45,7 @@ escape_sed_replacement() {
 
 # Render deployment manifests without mutating files tracked in git.
 sed -i "s|PORTAL_ECR_IMAGE|$(escape_sed_replacement "$ECR_IMAGE")|g" "$RENDER_DIR/portal/deployment.yaml"
+sed -i "s|COGNITO_USER_POOL_ID_VALUE|$(escape_sed_replacement "$COGNITO_USER_POOL_ID")|g" "$RENDER_DIR/portal/deployment.yaml"
 sed -i "s|COGNITO_DOMAIN_VALUE|$(escape_sed_replacement "$COGNITO_DOMAIN")|g" "$RENDER_DIR/portal/deployment.yaml"
 sed -i "s|FLASK_SECRET_KEY_VALUE|$(escape_sed_replacement "$FLASK_SECRET_KEY")|g" "$RENDER_DIR/portal/deployment.yaml"
 sed -i "s|COGNITO_CLIENT_ID_VALUE|$(escape_sed_replacement "$COGNITO_CLIENT_ID")|g" "$RENDER_DIR/portal/deployment.yaml"

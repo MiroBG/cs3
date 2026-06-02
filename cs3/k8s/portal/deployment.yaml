@@ -61,6 +61,11 @@ spec:
             secretKeyRef:
               name: portal-secrets
               key: cognito-client-secret
+        - name: COGNITO_USER_POOL_ID
+          valueFrom:
+            configMapKeyRef:
+              name: portal-config
+              key: cognito-user-pool-id
         - name: COGNITO_DOMAIN
           valueFrom:
             configMapKeyRef:
@@ -120,6 +125,7 @@ metadata:
   name: portal-config
   namespace: cs3-prod
 data:
+  cognito-user-pool-id: "COGNITO_USER_POOL_ID_VALUE"
   cognito-domain: "COGNITO_DOMAIN_VALUE"
   portal-url: "PORTAL_URL_VALUE"
   portal-demo-auth: "PORTAL_DEMO_AUTH_VALUE"

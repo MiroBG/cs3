@@ -94,6 +94,12 @@ resource "aws_cognito_user_pool_client" "this" {
   logout_urls                          = var.logout_urls
 
   supported_identity_providers = ["COGNITO"]
+
+  lifecycle {
+    # Callback/logout URLs are updated post-deploy via AWS CLI (portal IP is unknown at plan time).
+    # Terraform managing these would reset them to placeholder values on every apply.
+    ignore_changes = [callback_urls, logout_urls]
+  }
 }
 
 resource "aws_cognito_identity_provider" "google" {

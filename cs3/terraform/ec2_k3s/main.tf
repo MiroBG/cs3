@@ -143,6 +143,31 @@ resource "aws_iam_role_policy" "k3s_kubeconfig_parameter" {
   })
 }
 
+resource "aws_iam_role_policy" "k3s_cognito_admin" {
+  name = "${var.name_prefix}-k3s-cognito-admin${var.resource_suffix_part}"
+  role = aws_iam_role.k3s.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "cognito-idp:AdminCreateUser",
+          "cognito-idp:AdminAddUserToGroup",
+          "cognito-idp:AdminDeleteUser",
+          "cognito-idp:AdminDisableUser",
+          "cognito-idp:AdminGetUser",
+          "cognito-idp:AdminRemoveUserFromGroup",
+          "cognito-idp:CreateGroup",
+          "cognito-idp:GetGroup"
+        ]
+        Resource = var.cognito_user_pool_arn
+      }
+    ]
+  })
+}
+
 # Instance profile
 resource "aws_iam_instance_profile" "k3s" {
   name = "${var.name_prefix}-k3s-profile${var.resource_suffix_part}"

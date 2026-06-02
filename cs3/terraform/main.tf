@@ -51,6 +51,7 @@ module "ec2_k3s" {
   db_password               = var.db_password
   grafana_admin_password    = var.grafana_admin_password
   kubeconfig_parameter_name = var.kubeconfig_parameter_name
+  cognito_user_pool_arn     = module.cognito.user_pool_arn
   tags                      = var.tags
   create_instance           = var.create_k3s_instance
 }

@@ -60,6 +60,12 @@ variable "kubeconfig_parameter_name" {
   description = "SSM Parameter Store name where the EC2 bootstrap publishes kubeconfig"
 }
 
+variable "cognito_user_pool_arn" {
+  type        = string
+  default     = "*"
+  description = "Cognito User Pool ARN used by the portal for admin provisioning"
+}
+
 variable "tags" {
   type        = map(string)
   default     = {}
