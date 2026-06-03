@@ -207,6 +207,15 @@ resource "aws_instance" "k3s" {
   monitoring                  = true
   associate_public_ip_address = true
 
+  # Hop limit 2 lets k3s pods (one CNI hop away) reach the Instance Metadata
+  # Service, so the portal pod can borrow the instance role for boto3 Cognito
+  # admin calls. Default of 1 blocks pods. http_tokens optional keeps IMDSv1/v2.
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "optional"
+    http_put_response_hop_limit = 2
+  }
+
   tags = merge(local.common_tags, {
     Name = local.instance_name
   })

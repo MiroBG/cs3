@@ -57,3 +57,11 @@ spec:
     ports:
     - protocol: TCP
       port: 443
+  # Instance Metadata Service: boto3 borrows the EC2 instance role from here to
+  # sign Cognito admin calls. Only the portal pod is allowlisted to reach IMDS.
+  - to:
+    - ipBlock:
+        cidr: 169.254.169.254/32
+    ports:
+    - protocol: TCP
+      port: 80
